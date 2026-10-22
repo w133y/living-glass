@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "id": "livingglass",
+  "version": "${version}",
+  "name": "Living Glass",
+  "description": "Vanilla glass reacts to the weather: windows fog up, frost over and catch raindrops. Client-side only.",
+  "authors": [
+    "w1z4r_d"
+  ],
+  "contact": {
+    "homepage": "https://github.com/w133y/living-glass",
+    "sources": "https://github.com/w133y/living-glass",
+    "issues": "https://github.com/w133y/living-glass/issues"
+  },
+  "license": "MIT",
+  "icon": "assets/livingglass/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.w1z4r_d.livingglass.LivingGlassClient"
+    ],
+    "modmenu": [
+      "com.w1z4r_d.livingglass.ModMenuIntegration"
+    ]
+  },
+  "mixins": [
+    "livingglass.mixins.json",
+    "livingglass.compat.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.19",
+    "minecraft": "${mc_dep}",
+    "java": ">=${java}",
+    "fabric-api": "*"
+  },
+  "suggests": {
+    "modmenu": "*"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "required": true,
+  "package": "com.w1z4r_d.livingglass.compat.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "LevelRendererMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

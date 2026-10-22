@@ -1,0 +1,28 @@
+# Gradle
+.gradle/
+build/
+out/
+
+# Loom / IDE runs
+run/
+remappedSrc/
+
+# IDE
+.idea/
+*.iml
+*.bat
+*.ipr
+*.iws
+.vscode/
+.classpath
+.project
+.settings/
+bin/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Windows build scripts are part of the project
+!gradlew.bat
+!build-all.bat

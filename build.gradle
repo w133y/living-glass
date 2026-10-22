@@ -1,0 +1,101 @@
+plugins {
+	// 26.x is unobfuscated, 1.21.x needs remapping
+	id 'net.fabricmc.fabric-loom' version "${loom_version}" apply false
+	id 'net.fabricmc.fabric-loom-remap' version "${loom_version}" apply false
+}
+
+// Per-version Minecraft settings come from versions/<mcVersion>.properties
+def versionFile = file("versions/${project.mcVersion}.properties")
+if (!versionFile.exists()) {
+	throw new GradleException("Missing ${versionFile}. Available: " + file('versions').list().join(', '))
+}
+def vp = new Properties()
+versionFile.withInputStream { vp.load(it) }
+['minecraft_version', 'mc_dep', 'fabric_api_version', 'modmenu_version', 'compat', 'java', 'remap'].each { key ->
+	if (!vp.getProperty(key)) {
+		throw new GradleException("${versionFile.name} is missing '${key}'")
+	}
+}
+def remap = vp.remap.toBoolean()
+def javaVersion = vp.java as int
+
+apply plugin: remap ? 'net.fabricmc.fabric-loom-remap' : 'net.fabricmc.fabric-loom'
+
+version = "${project.mod_version}+${vp.minecraft_version}"
+group = project.maven_group
+
+base {
+	archivesName = project.archives_base_name
+}
+
+sourceSets {
+	main {
+		java {
+			srcDir "src/compat/${vp.compat}/java"
+		}
+		resources {
+			srcDir "src/compat/${vp.compat}/resources"
+		}
+	}
+}
+
+repositories {
+	maven {
+		name = 'Terraformers'
+		url = 'https://maven.terraformersmc.com/releases/'
+	}
+	maven {
+		name = 'Modrinth'
+		url = 'https://api.modrinth.com/maven'
+		content { includeGroup 'maven.modrinth' }
+	}
+}
+
+// gradlew runClient -Pshaders adds Sodium and Iris to the dev game, for testing with shader packs
+def withShaders = project.hasProperty('shaders')
+if (withShaders && !(vp.sodium_version && vp.iris_version)) {
+	throw new GradleException("${versionFile.name} needs sodium_version and iris_version for -Pshaders")
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${vp.minecraft_version}"
+	if (remap) {
+		mappings loom.officialMojangMappings()
+		modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+		modImplementation "net.fabricmc.fabric-api:fabric-api:${vp.fabric_api_version}"
+		// Mod Menu is compile-only; the mod works without it
+		modCompileOnly("com.terraformersmc:modmenu:${vp.modmenu_version}") { transitive = false }
+		modLocalRuntime("com.terraformersmc:modmenu:${vp.modmenu_version}") { transitive = false }
+		if (withShaders) {
+			modLocalRuntime "maven.modrinth:sodium:${vp.sodium_version}"
+			modLocalRuntime "maven.modrinth:iris:${vp.iris_version}"
+		}
+	} else {
+		implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+		implementation "net.fabricmc.fabric-api:fabric-api:${vp.fabric_api_version}"
+		compileOnly("com.terraformersmc:modmenu:${vp.modmenu_version}") { transitive = false }
+		localRuntime("com.terraformersmc:modmenu:${vp.modmenu_version}") { transitive = false }
+		if (withShaders) {
+			localRuntime "maven.modrinth:sodium:${vp.sodium_version}"
+			localRuntime "maven.modrinth:iris:${vp.iris_version}"
+		}
+	}
+}
+
+processResources {
+	def props = [version: project.version, mc_dep: vp.mc_dep, java: vp.java]
+	inputs.properties props
+	filesMatching(["fabric.mod.json", "*.mixins.json"]) {
+		expand props
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = javaVersion
+	it.options.encoding = 'UTF-8'
+}
+
+java {
+	sourceCompatibility = JavaVersion.toVersion(javaVersion)
+	targetCompatibility = JavaVersion.toVersion(javaVersion)
+}
