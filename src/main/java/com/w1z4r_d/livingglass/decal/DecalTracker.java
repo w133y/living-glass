@@ -104,6 +104,18 @@ public final class DecalTracker {
         }
     }
 
+    /** A block changed: ash and splats on it vanish at once, and ash next to it re-checks how it joins up. */
+    public void onBlockChanged(BlockPos pos) {
+        long key = pos.asLong();
+        ash.values().removeIf(a -> a.pos == key && (level == null || !hasFace(pos, a.face)));
+        splats.removeIf(s -> s.pos() == key);
+        for (Ash a : ash.values()) {
+            if (BlockPos.of(a.pos).distManhattan(pos) <= 2) {
+                a.renderTime = -1;
+            }
+        }
+    }
+
     public void tick(Minecraft mc) {
         if (mc.level != level) {
             fires.clear();
@@ -187,7 +199,7 @@ public final class DecalTracker {
     }
 
     /** The block at pos has something on its face toward face, so ash has a surface to sit on. */
-    boolean hasFace(BlockPos pos, Direction face) {
+    public boolean hasFace(BlockPos pos, Direction face) {
         BlockState state = level.getBlockState(pos);
         return !state.isAir() && !(state.getBlock() instanceof BaseFireBlock)
                 && !state.getShape(level, pos).getFaceShape(face).isEmpty();

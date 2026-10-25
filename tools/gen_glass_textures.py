@@ -108,29 +108,34 @@ def frost(mask, stage, fern):
     return img
 
 
+ICE_REACH = [2.0, 4.0, 6.0, 8.5]
+
+
 def ice_dist(x, y, mask):
-    """Outside ice grows mostly from the bottom of the window: the bottom frame counts as much nearer."""
+    """Outside ice grows from the bottom of the window up to about half a block; the other frame edges only get
+    a thin rim."""
     d = [99.0]
-    if mask & 4: d.append((S - 1 - y) * 0.7)
-    if mask & 1: d.append(x * 1.9)
-    if mask & 2: d.append((S - 1 - x) * 1.9)
-    if mask & 8: d.append(y * 2.6)
+    if mask & 4: d.append(S - 1 - y)
+    if mask & 1: d.append(x * 3.5)
+    if mask & 2: d.append((S - 1 - x) * 3.5)
+    if mask & 8: d.append(y * 4.5)
     return min(d)
 
 
 def ice(mask, stage, fern):
     """Outside ice: bluer than the inside frost, thickest at the bottom of the window."""
-    reach = STAGE_REACH[stage]
+    reach = ICE_REACH[stage]
     img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     for y in range(S):
         for x in range(S):
             d = ice_dist(x, y, mask) + fuzz[y][x]
-            if fern[y][x] < reach * 0.8:
-                px = (215, 236, 255, 235)  # glint on a crystal
-            elif d < reach - 2:
-                px = (168, 204, 246, 210 if d < 2 else 180)
+            if d < reach and fern[y][x] < reach * 0.7:
+                px = (222, 240, 255, 235)  # glint on a crystal
+            elif d < reach - 1.5:
+                # Thickest right at the frame, thinning upward
+                px = (162, 200, 244, 220 if d < 2 else 190 if d < 4.5 else 150)
             elif d < reach:
-                px = (150, 192, 242, 120)  # thin growing front
+                px = (150, 192, 242, 105)  # thin growing front
             else:
                 continue
             img.putpixel((x, y), px)

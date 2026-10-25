@@ -1,5 +1,6 @@
 package com.w1z4r_d.livingglass.mixin;
 
+import com.w1z4r_d.livingglass.decal.DecalTracker;
 import com.w1z4r_d.livingglass.glass.GlassTracker;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
@@ -17,6 +18,7 @@ abstract class ClientLevelMixin {
                                             CallbackInfo ci) {
         if (oldState != newState) {
             GlassTracker.INSTANCE.onBlockChanged(pos);
+            DecalTracker.INSTANCE.onBlockChanged(pos);
         }
     }
 }

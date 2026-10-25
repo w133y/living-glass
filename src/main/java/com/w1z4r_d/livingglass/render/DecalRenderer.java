@@ -137,32 +137,48 @@ final class DecalRenderer {
         }
     }
 
+    /**
+     * A splat centred on the hit point. Where it reaches past the edge of the block, the rest is drawn on the
+     * neighbouring blocks of the same wall or floor, as long as their face is there and open.
+     */
     private static void drawSplat(Level level, Splat s, BlockPos pos, Vec3 cam, float alpha) {
         Direction face = s.face();
+        Direction t1 = across(face), t2 = up(face);
         double[] local = {s.x(), s.y(), s.z()};
-        float a = coord(across(face), local);
-        float b = coord(up(face), local);
+        float a = coord(t1, local);
+        float b = coord(t2, local);
         boolean positive = face.getAxisDirection() == Direction.AxisDirection.POSITIVE;
         double plane = local[face.getAxis().ordinal()] + (positive ? LIFT : -LIFT);
-        float a0 = Math.max(0, a - SPLAT_HALF), a1 = Math.min(1, a + SPLAT_HALF);
-        float b0 = Math.max(0, b - SPLAT_HALF), b1 = Math.min(1, b + SPLAT_HALF);
-        if (a1 <= a0 || b1 <= b0) {
-            return;
-        }
-        boolean lit = OverlayRenderer.lit;
-        BlockPos air = pos.relative(face);
-        int color = OverlayRenderer.argb(alpha, 0xFFFFFF, lit ? 1 : OverlayRenderer.shade(level, air));
-        int light = lit ? OverlayRenderer.packedLight(level, air) : OverlayRenderer.FULL_BRIGHT;
-        // Texture coordinates follow the clipped rectangle, so a splat at an edge is cut off rather than squashed
-        float size = 2 * SPLAT_HALF;
-        float u0 = (a0 - (a - SPLAT_HALF)) / size, u1 = (a1 - (a - SPLAT_HALF)) / size;
-        float v0 = 1 - (b0 - (b - SPLAT_HALF)) / size, v1 = 1 - (b1 - (b - SPLAT_HALF)) / size;
         FloatArrayList out = snowLists[Math.floorMod(s.seed(), VARIANTS)];
-        vertex(out, pos, face, plane, a0, b0, cam, u0, v0, color);
-        vertex(out, pos, face, plane, a1, b0, cam, u1, v0, color);
-        vertex(out, pos, face, plane, a1, b1, cam, u1, v1, color);
-        vertex(out, pos, face, plane, a0, b1, cam, u0, v1, color);
-        end(out, face, light);
+        for (int da = -1; da <= 1; da++) {
+            for (int db = -1; db <= 1; db++) {
+                // The splat in the coordinates of the neighbouring block da across and db up
+                float ca = a - da, cb = b - db;
+                float a0 = Math.max(0, ca - SPLAT_HALF), a1 = Math.min(1, ca + SPLAT_HALF);
+                float b0 = Math.max(0, cb - SPLAT_HALF), b1 = Math.min(1, cb + SPLAT_HALF);
+                if (a1 <= a0 || b1 <= b0) {
+                    continue;
+                }
+                BlockPos block = pos.relative(t1, da).relative(t2, db);
+                BlockPos air = block.relative(face);
+                if ((da != 0 || db != 0) && (!DecalTracker.INSTANCE.hasFace(block, face)
+                        || level.getBlockState(air).isCollisionShapeFullBlock(level, air))) {
+                    continue;
+                }
+                boolean lit = OverlayRenderer.lit;
+                int color = OverlayRenderer.argb(alpha, 0xFFFFFF, lit ? 1 : OverlayRenderer.shade(level, air));
+                int light = lit ? OverlayRenderer.packedLight(level, air) : OverlayRenderer.FULL_BRIGHT;
+                // Texture coordinates follow the clipped rectangle, so the splat is cut at the edge, not squashed
+                float size = 2 * SPLAT_HALF;
+                float u0 = (a0 - (ca - SPLAT_HALF)) / size, u1 = (a1 - (ca - SPLAT_HALF)) / size;
+                float v0 = 1 - (b0 - (cb - SPLAT_HALF)) / size, v1 = 1 - (b1 - (cb - SPLAT_HALF)) / size;
+                vertex(out, block, face, plane, a0, b0, cam, u0, v0, color);
+                vertex(out, block, face, plane, a1, b0, cam, u1, v0, color);
+                vertex(out, block, face, plane, a1, b1, cam, u1, v1, color);
+                vertex(out, block, face, plane, a0, b1, cam, u0, v1, color);
+                end(out, face, light);
+            }
+        }
     }
 
     /** One cell of a face in face coordinates (x across, y up, 0..1), with the whole texture mapped over the face. */
