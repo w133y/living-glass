@@ -7,6 +7,7 @@ import com.w1z4r_d.livingglass.LivingGlassConfig;
 import com.w1z4r_d.livingglass.compat.Compat;
 import com.w1z4r_d.livingglass.glass.GlassState;
 import com.w1z4r_d.livingglass.glass.GlassTracker;
+import com.w1z4r_d.livingglass.glass.Melt;
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import net.minecraft.client.Minecraft;
@@ -40,17 +41,17 @@ public final class OverlayRenderer {
     /** Overlays sit just inside the glass, so the glass texture always draws on top of them. */
     private static final float INSET = 0.001f;
     /** Without shaders the emissive render type ignores the lightmap; brightness is baked into vertex colours instead. */
-    private static final int FULL_BRIGHT = 0xF000F0;
+    static final int FULL_BRIGHT = 0xF000F0;
     /**
      * A face with breath or wipe patches (or melting into a new texture) is split into one cell per texture pixel,
      * each with a flat alpha, so patches have pixel edges like the textures.
      */
-    private static final int GRID = 16;
+    static final int GRID = 16;
     /**
      * Cells fainter than this are not drawn at all. Shader packs put a sky reflection on every translucent quad,
      * so nearly invisible cells at the edge of a wiped patch would light up as bright streaks.
      */
-    private static final float MIN_CELL_ALPHA = 0.06f;
+    static final float MIN_CELL_ALPHA = 0.06f;
     private static final float WIPE_RADIUS = 0.3f;
     private static final float BREATH_RADIUS = 0.35f;
     private static final float BREATH_ALPHA = 0.7f;
@@ -69,11 +70,15 @@ public final class OverlayRenderer {
     /** Frost grows in pixel stages from the frame inward; stage textures are supersets of the previous one. */
     private static final int FROST_STAGES = 4;
     private static final FloatArrayList[] frost = lists(VARIANTS * MASKS * FROST_STAGES);
+    /** Ice on the outside face, grown in stages like the frost but mostly from the bottom of the window. */
+    private static final FloatArrayList[] ice = lists(VARIANTS * MASKS * FROST_STAGES);
+    /** How strongly an effect on one side of the glass shows through to a viewer on the other side. */
+    private static final float OTHER_SIDE_ALPHA = 0.3f;
     private static final FloatArrayList drops = new FloatArrayList();
     private static final FloatArrayList debug = new FloatArrayList();
 
     /** Whether this frame's overlays are lit by the lightmap (shader pack active) instead of baked shading. */
-    private static boolean lit;
+    static boolean lit;
 
     public static int visible;
     public static double renderNanos;
@@ -108,6 +113,9 @@ public final class OverlayRenderer {
             list.clear();
         }
         for (FloatArrayList list : frost) {
+            list.clear();
+        }
+        for (FloatArrayList list : ice) {
             list.clear();
         }
         drops.clear();
@@ -146,64 +154,37 @@ public final class OverlayRenderer {
                 boolean patches = gs.patches;
                 Direction in = gs.inner;
                 int below = gs.below, above = gs.above, left = gs.left, right = gs.right;
+                float seen = seenFrom(cam, p, in, gs);
                 // Each face picks a texture variant and mirroring, so droplets and crystals never repeat in a grid;
                 // mirroring swaps which sides of the texture are the frame
                 int style = faceStyle(gs, in);
                 boolean flipU = (style & 4) != 0, flipV = (style & 8) != 0;
-                int tex = (style & 3) * MASKS + frameMask(flipU ? right : left, flipU ? left : right,
-                        flipV ? above : below, flipV ? below : above);
                 float u0 = flipU ? 1 : 0, u1 = flipU ? 0 : 1, v0 = flipV ? 1 : 0, v1 = flipV ? 0 : 1;
-                if (tex != gs.tex) {
-                    // The window's frame moved (a neighbour was built or broken): melt from what is shown now
-                    if (tex == gs.prevTex && gs.texBlend < 1) {
-                        // Put back before the melt finished: run the same melt backwards from where it is
-                        gs.prevTex = gs.tex;
-                        gs.texBlend = 1 - gs.texBlend;
-                        gs.meltReversed = !gs.meltReversed;
-                    } else if (gs.tex >= 0) {
-                        gs.prevTex = gs.texBlend >= 0.5f ? gs.tex : gs.prevTex;
-                        gs.texBlend = 0;
-                        gs.meltReversed = false;
-                    }
-                    gs.tex = tex;
-                }
-                // While melting, each 2x2-pixel cell switches from the old texture to the new one at its own moment.
-                // Never two layers at once: shader packs darken what is behind every translucent layer.
-                boolean melting = gs.texBlend < 1 && gs.prevTex >= 0;
-                int cells = patches || melting ? GRID : 1;
-                float melt = melting ? gs.texBlend : 1;
-                int t = gs.tex, old = melting ? gs.prevTex : -1;
+                // The window's frame moved (a neighbour was built or broken): melt from what is shown now
+                gs.look.show((style & 3) * MASKS + frameMask(flipU ? right : left, flipU ? left : right,
+                        flipV ? above : below, flipV ? below : above));
+                int cells = patches || gs.look.melting() ? GRID : 1;
                 if (cfg.condensation.enabled && (gs.fog > 0.004f || patches)) {
                     int rgb = cfg.tintStainedGlass ? mix(gs.tint, 0.25f) : 0xFFFFFF;
                     float a = Math.min(1, gs.fog);
                     // Fill from the bottom of the whole window, not of each block
                     float height = below + 1 + above;
-                    faceMelt(fog[t], old < 0 ? null : fog[old], melt, p, gs.inner, gs, 0, 1, cam, u0, v0, u1, v1, cells,
-                            rgb, shade, light, (x, y) -> {
+                    faceMelt(fog[gs.look.tex], gs.look.melting() ? fog[gs.look.prevTex] : null, gs.look, p, in, gs, 0, 1,
+                            cam, u0, v0, u1, v1, cells, rgb, shade, light, (x, y) -> {
                         float h = (below + y) / height;
                         // The denser rim along the frame is baked into the texture variant
-                        return a * (1 - h * (1 - a)) * (1 - wiped(gs, in, x, y)) + BREATH_ALPHA * breathed(gs, x, y);
+                        return seen * (a * (1 - h * (1 - a)) * (1 - wiped(gs, in, x, y)) + BREATH_ALPHA * breathed(gs, x, y));
                     });
                 }
                 if (cfg.frost.enabled && gs.frost > 0.004f) {
-                    // Draw the last fully grown stage plus the next one fading in
-                    float grown = gs.frost * FROST_STAGES;
-                    int full = Math.min(FROST_STAGES, (int) grown);
-                    if (full > 0) {
-                        int stage = full - 1;
-                        faceMelt(frost[t * FROST_STAGES + stage], old < 0 ? null : frost[old * FROST_STAGES + stage], melt,
-                                p, in, gs, 0, 1, cam, u0, v0, u1, v1, cells, 0xFFFFFF, shade, light,
-                                (x, y) -> 1 - wiped(gs, in, x, y));
-                    }
-                    if (full < FROST_STAGES) {
-                        float partial = grown - full;
-                        faceMelt(frost[t * FROST_STAGES + full], old < 0 ? null : frost[old * FROST_STAGES + full], melt,
-                                p, in, gs, 0, 1, cam, u0, v0, u1, v1, cells, 0xFFFFFF, shade, light,
-                                (x, y) -> partial * (1 - wiped(gs, in, x, y)));
-                    }
+                    stages(frost, gs.look, gs.frost, p, in, gs, cam, u0, v0, u1, v1, cells, shade, light,
+                            (x, y) -> seen * (1 - wiped(gs, in, x, y)));
                 }
                 if (gs.roomMask != 0) {
                     roomSides(gs, p, cam, cfg, shade, light, below, above);
+                }
+                if (cfg.ice.enabled && gs.ice > 0.004f) {
+                    outsideIce(gs, p, cam, below, above, left, right);
                 }
                 if (cfg.debug) {
                     face(debug, p, gs.inner, gs, 0, 1, cam, 0, 0, 1, 1, 1, 0x00FF00, 1, FULL_BRIGHT, (x, y) -> 0.375f);
@@ -237,9 +218,11 @@ public final class OverlayRenderer {
                 submit(collector, poseStack, "condensation_" + variant + "_" + mask, fog[tex]);
                 for (int stage = 0; stage < FROST_STAGES; stage++) {
                     submit(collector, poseStack, "frost_" + variant + "_" + mask + "_" + stage, frost[tex * FROST_STAGES + stage]);
+                    submit(collector, poseStack, "ice_" + variant + "_" + mask + "_" + stage, ice[tex * FROST_STAGES + stage]);
                 }
             }
         }
+        DecalRenderer.render(poseStack, collector, level, cam, cfg);
         submit(collector, poseStack, "white", drops);
         submit(collector, poseStack, "white", debug);
 
@@ -263,6 +246,7 @@ public final class OverlayRenderer {
                 continue;
             }
             float min = gs.roomMin[i], max = gs.roomMax[i];
+            float seen = seenFrom(cam, p, dir, gs);
             // Own look per side face, so it does not copy the main face next to it
             int style = faceStyle(gs, dir);
             boolean flipV = (style & 8) != 0;
@@ -275,17 +259,17 @@ public final class OverlayRenderer {
             if (cfg.condensation.enabled && gs.fog > 0.004f) {
                 int rgb = cfg.tintStainedGlass ? mix(gs.tint, 0.25f) : 0xFFFFFF;
                 face(fog[tex], p, dir, gs, min, max, cam, 0, v0, 1, v1, cells, rgb, shade, light,
-                        (x, y) -> a * (1 - (below + y) / height * (1 - a)) * (1 - wiped(gs, dir, x, y)));
+                        (x, y) -> seen * a * (1 - (below + y) / height * (1 - a)) * (1 - wiped(gs, dir, x, y)));
             }
             if (cfg.frost.enabled && gs.frost > 0.004f) {
                 if (full > 0) {
                     face(frost[tex * FROST_STAGES + full - 1], p, dir, gs, min, max, cam, 0, v0, 1, v1, cells, 0xFFFFFF, shade,
-                            light, (x, y) -> 1 - wiped(gs, dir, x, y));
+                            light, (x, y) -> seen * (1 - wiped(gs, dir, x, y)));
                 }
                 if (full < FROST_STAGES) {
                     float partial = grown - full;
                     face(frost[tex * FROST_STAGES + full], p, dir, gs, min, max, cam, 0, v0, 1, v1, cells, 0xFFFFFF, shade,
-                            light, (x, y) -> partial * (1 - wiped(gs, dir, x, y)));
+                            light, (x, y) -> seen * partial * (1 - wiped(gs, dir, x, y)));
                 }
             }
         }
@@ -305,6 +289,50 @@ public final class OverlayRenderer {
         return (left == 0 ? 1 : 0) | (right == 0 ? 2 : 0) | (below == 0 ? 4 : 0) | (above == 0 ? 8 : 0);
     }
 
+    /**
+     * Ice on the outside face of a window. It mirrors the inside face, so the window's left and right swap; it melts
+     * into a new frame texture on its own like the inside face does.
+     */
+    private static void outsideIce(GlassState gs, BlockPos p, Vec3 cam, int below, int above, int left, int right) {
+        Direction out = gs.inner.getOpposite();
+        int style = faceStyle(gs, out);
+        boolean flipU = (style & 4) != 0, flipV = (style & 8) != 0;
+        float u0 = flipU ? 1 : 0, u1 = flipU ? 0 : 1, v0 = flipV ? 1 : 0, v1 = flipV ? 0 : 1;
+        // Seen from outside, the room's right is on the left
+        int outLeft = right, outRight = left;
+        gs.iceLook.show((style & 3) * MASKS + frameMask(flipU ? outRight : outLeft, flipU ? outLeft : outRight,
+                flipV ? above : below, flipV ? below : above));
+        float seen = seenFrom(cam, p, out, gs);
+        stages(ice, gs.iceLook, gs.ice, p, out, gs, cam, u0, v0, u1, v1, gs.iceLook.melting() ? GRID : 1,
+                lit ? 1 : gs.shadeOuter, lit ? gs.lightOuter : FULL_BRIGHT, (x, y) -> seen);
+    }
+
+    /** Draws the last fully grown stage plus the next one fading in, melting between textures with look. */
+    private static void stages(FloatArrayList[] lists, Melt look, float amount, BlockPos p, Direction dir, GlassState gs,
+                               Vec3 cam, float u0, float v0, float u1, float v1, int cells, float shade, int light,
+                               AlphaField alpha) {
+        float grown = amount * FROST_STAGES;
+        int full = Math.min(FROST_STAGES, (int) grown);
+        if (full > 0) {
+            int stage = full - 1;
+            faceMelt(lists[look.tex * FROST_STAGES + stage], look.melting() ? lists[look.prevTex * FROST_STAGES + stage] : null,
+                    look, p, dir, gs, 0, 1, cam, u0, v0, u1, v1, cells, 0xFFFFFF, shade, light, alpha);
+        }
+        if (full < FROST_STAGES) {
+            float partial = grown - full;
+            faceMelt(lists[look.tex * FROST_STAGES + full], look.melting() ? lists[look.prevTex * FROST_STAGES + full] : null,
+                    look, p, dir, gs, 0, 1, cam, u0, v0, u1, v1, cells, 0xFFFFFF, shade, light,
+                    (x, y) -> partial * alpha.at(x, y));
+        }
+    }
+
+    /** 1 when the camera is on the side the face looks out to, OTHER_SIDE_ALPHA when it sees the face through the glass. */
+    private static float seenFrom(Vec3 cam, BlockPos p, Direction dir, GlassState gs) {
+        double half = gs.pane ? GlassState.PANE_HALF : 0.5;
+        double side = (cam.x - p.getX() - 0.5) * dir.getStepX() + (cam.z - p.getZ() - 0.5) * dir.getStepZ() - half;
+        return side >= 0 ? 1 : OTHER_SIDE_ALPHA;
+    }
+
     /** Recomputes light and window merging for one glass block; staggered by seed so refreshes spread over frames. */
     private static void refreshCache(Level level, Long2ObjectOpenHashMap<GlassState> states, GlassState gs,
                                      BlockPos p, long now) {
@@ -312,6 +340,8 @@ public final class OverlayRenderer {
         if (gs.isWindow()) {
             gs.shadeInner = shade(level, p.relative(gs.inner));
             gs.lightInner = packedLight(level, p.relative(gs.inner));
+            gs.shadeOuter = shade(level, p.relative(gs.inner.getOpposite()));
+            gs.lightOuter = packedLight(level, p.relative(gs.inner.getOpposite()));
             // Neighbouring windows of the same room merge into one surface
             int rx = -gs.inner.getStepZ(), rz = gs.inner.getStepX();
             gs.below = run(states, gs, p, 0, -1, 0);
@@ -376,7 +406,7 @@ public final class OverlayRenderer {
         }
     }
 
-    private static int hash(int h) {
+    static int hash(int h) {
         h ^= h >>> 16;
         h *= 0x7feb352d;
         h ^= h >>> 15;
@@ -500,14 +530,14 @@ public final class OverlayRenderer {
     /** Adds the given face of the block (or pane) as cells x cells quads, slightly behind the surface. */
     private static void face(FloatArrayList out, BlockPos pos, Direction dir, GlassState gs, float spanMin, float spanMax, Vec3 cam,
                              float u0, float v0, float u1, float v1, int cells, int rgb, float shade, int light, AlphaField alpha) {
-        faceMelt(out, null, 1, pos, dir, gs, spanMin, spanMax, cam, u0, v0, u1, v1, cells, rgb, shade, light, alpha);
+        faceMelt(out, null, null, pos, dir, gs, spanMin, spanMax, cam, u0, v0, u1, v1, cells, rgb, shade, light, alpha);
     }
 
     /**
      * Like face(), but while a melt is running (oldOut not null) each cell goes either to the new texture's list or
      * to the old one's, switching over in a fixed random order as melt goes from 0 to 1.
      */
-    private static void faceMelt(FloatArrayList out, FloatArrayList oldOut, float melt, BlockPos pos, Direction dir,
+    private static void faceMelt(FloatArrayList out, FloatArrayList oldOut, Melt look, BlockPos pos, Direction dir,
                                  GlassState gs, float spanMin, float spanMax, Vec3 cam, float u0, float v0, float u1,
                                  float v1, int cells, int rgb, float shade, int light, AlphaField alpha) {
         float nx = dir.getStepX();
@@ -535,7 +565,7 @@ public final class OverlayRenderer {
                 FloatArrayList target = out;
                 if (oldOut != null) {
                     float rank = (hash(gs.seed + i * 131 + j * 7919) & 0xFFFF) / 65536f;
-                    if ((gs.meltReversed ? 1 - rank : rank) >= melt) {
+                    if ((look.reversed ? 1 - rank : rank) >= look.blend) {
                         target = oldOut;
                     }
                 }
@@ -575,7 +605,7 @@ public final class OverlayRenderer {
         out.add(Float.intBitsToFloat(color));
     }
 
-    private static void submit(SubmitNodeCollector collector, PoseStack poseStack, String texture, FloatArrayList quads) {
+    static void submit(SubmitNodeCollector collector, PoseStack poseStack, String texture, FloatArrayList quads) {
         if (quads.isEmpty()) {
             return;
         }
@@ -583,7 +613,7 @@ public final class OverlayRenderer {
                 (pose, consumer) -> emit(quads, pose, consumer));
     }
 
-    private static void emit(FloatArrayList q, PoseStack.Pose pose, VertexConsumer vc) {
+    static void emit(FloatArrayList q, PoseStack.Pose pose, VertexConsumer vc) {
         float[] a = q.elements();
         for (int i = 0; i + STRIDE <= q.size(); i += STRIDE) {
             float nx = a[i + 24], ny = a[i + 25], nz = a[i + 26];
@@ -597,7 +627,7 @@ public final class OverlayRenderer {
     }
 
     /** Brightness 0..1 of the air block next to the face, close to what the vanilla lightmap gives. */
-    private static float shade(Level level, BlockPos pos) {
+    static float shade(Level level, BlockPos pos) {
         // Night dims sky light to a fifth instead of removing it, as the vanilla lightmap does
         float daylight = 1 - 0.8f * level.getSkyDarken() / 11f;
         float sky = curve(level.getBrightness(LightLayer.SKY, pos) / 15f) * daylight;
@@ -610,7 +640,7 @@ public final class OverlayRenderer {
     }
 
     /** Lightmap coordinates of a block, as vanilla packs them for rendering. */
-    private static int packedLight(Level level, BlockPos pos) {
+    static int packedLight(Level level, BlockPos pos) {
         return level.getBrightness(LightLayer.SKY, pos) << 20 | level.getBrightness(LightLayer.BLOCK, pos) << 4;
     }
 
@@ -619,7 +649,7 @@ public final class OverlayRenderer {
         return l / (4 - 3 * l);
     }
 
-    private static int argb(float alpha, int rgb, float shade) {
+    static int argb(float alpha, int rgb, float shade) {
         int r = (int) (((rgb >> 16) & 0xFF) * shade);
         int g = (int) (((rgb >> 8) & 0xFF) * shade);
         int b = (int) ((rgb & 0xFF) * shade);

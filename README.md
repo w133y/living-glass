@@ -14,6 +14,9 @@ No new blocks and no server install. Works on any server.
 
 - **Condensation:** a warm room in a cold biome fogs its windows, densest along the frame and at the bottom.
 - **Frost:** below freezing, crystals creep in from the frame.
+- **Outside ice:** below freezing, bluish ice grows on the outside, mostly from the bottom of the window.
+- **Ash:** fire leaves a black scorch on the block it burns on and soot on the blocks around it, which fades after the fire is out.
+- **Snowball marks:** a thrown snowball leaves a splat wherever it hits for about 20 seconds.
 - **Raindrops:** drops run down glass exposed to rain and land on its top. Glass under a roof stays dry.
 - **Breath:** stand right at a cold window and your breath leaves a patch.
 - **Wipe:** right-click the glass with an empty hand to clear a spot. It slowly fogs up again.

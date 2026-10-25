@@ -3,6 +3,7 @@ package com.w1z4r_d.livingglass.glass;
 import com.w1z4r_d.livingglass.LivingGlassClient;
 import com.w1z4r_d.livingglass.LivingGlassConfig;
 import com.w1z4r_d.livingglass.compat.Compat;
+import com.w1z4r_d.livingglass.decal.DecalTracker;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
@@ -42,6 +43,8 @@ public final class GlassTracker {
     private static final double LOW_BLOCK_HEIGHT = 0.2;
     /** Narrower uncovered strips of a face are not worth drawing raindrops on. */
     private static final float MIN_WET_SPAN = 0.2f;
+    /** Inside fog above this makes the outside ice form faster. */
+    private static final float ICE_FOGGED_THRESHOLD = 0.3f;
     private static final float BREATH_BUILD_SECONDS = 3;
     private static final float BREATH_FADE_SECONDS = 10;
     private static final double BREATH_DISTANCE = 1.5;
@@ -160,6 +163,7 @@ public final class GlassTracker {
             return;
         }
         BlockState state = level.getBlockState(pos);
+        DecalTracker.INSTANCE.onBlock(pos, state);
         if (!isGlass(state)) {
             states.remove(key);
             return;
@@ -414,7 +418,11 @@ public final class GlassTracker {
                 gs.wipe[i] = approach(gs.wipe[i], 0, 1, t.fogBuildSeconds);
             }
             gs.patches = gs.hasPatches();
-            gs.texBlend = approach(gs.texBlend, 1, t.meltSeconds, 1);
+            gs.look.tick(t.meltSeconds);
+            gs.iceLook.tick(t.meltSeconds);
+            // Outside ice forms faster when the glass is already fogged from inside
+            gs.ice = approach(gs.ice, gs.iceTarget, gs.fog > ICE_FOGGED_THRESHOLD ? t.iceFoggedSeconds : t.iceBuildSeconds,
+                    t.frostMeltSeconds);
         }
         if (cfg.breathSpot.enabled) {
             breathe(Minecraft.getInstance().player, cfg);
@@ -479,16 +487,18 @@ public final class GlassTracker {
             }
         }
         if (!gs.isWindow()) {
-            gs.fogTarget = gs.frostTarget = 0;
+            gs.fogTarget = gs.frostTarget = gs.iceTarget = 0;
             return;
         }
         BlockPos outside = pos.relative(gs.inner.getOpposite());
         BlockPos inside = pos.relative(gs.inner);
+        float temp = Climate.outsideTemp(level, outside, cfg.climate);
+        // Outside ice only needs frost outdoors, not a warm room
+        gs.iceTarget = temp < Climate.FREEZING ? 1 : 0;
         float warmth = climate.warmth(level, inside, tick, cfg.climate.heatScanRadius);
         if (Float.isNaN(warmth)) {
             return; // scan budget spent this tick; try again next interval
         }
-        float temp = Climate.outsideTemp(level, outside, cfg.climate);
         float coldness = Math.clamp(((float) cfg.climate.comfortTemp - temp) / (float) cfg.climate.comfortTemp, 0f, 1f);
         gs.outsideTemp = temp;
         gs.warmth = warmth;
@@ -497,7 +507,7 @@ public final class GlassTracker {
     }
 
     /** Moves linearly toward target; a full 0..1 swing takes riseSeconds up or fallSeconds down. */
-    static float approach(float value, float target, double riseSeconds, double fallSeconds) {
+    public static float approach(float value, float target, double riseSeconds, double fallSeconds) {
         if (value < target) {
             return Math.min(target, value + (float) (1.0 / (riseSeconds * 20)));
         }

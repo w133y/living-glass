@@ -46,6 +46,15 @@ public final class LivingGlassConfig {
         public double dryingSeconds = 20;
         /** How long a window face melts into a new frame texture after a neighbouring window is built or broken. */
         public double meltSeconds = 40;
+        /** Outside ice build-up, and the faster build-up when the glass is fogged from inside. */
+        public double iceBuildSeconds = 180;
+        public double iceFoggedSeconds = 90;
+        /** Ash under or behind a fire, ash on blocks next to it, and how long ash takes to fade once the fire is out. */
+        public double ashBuildSeconds = 10;
+        public double ashSideBuildSeconds = 60;
+        public double ashFadeSeconds = 120;
+        /** How long a snowball splat stays before it is gone. */
+        public double snowSeconds = 20;
     }
 
     public static final class Climate {
@@ -59,6 +68,9 @@ public final class LivingGlassConfig {
     public boolean enabled = true;
     public Condensation condensation = new Condensation();
     public Toggle frost = new Toggle();
+    public Toggle ice = new Toggle();
+    public Toggle ash = new Toggle();
+    public Toggle snowballs = new Toggle();
     public Toggle raindrops = new Toggle();
     public Toggle breathSpot = new Toggle();
     public Toggle wipe = new Toggle();
@@ -100,6 +112,9 @@ public final class LivingGlassConfig {
     private void sanitize() {
         if (condensation == null) condensation = new Condensation();
         if (frost == null) frost = new Toggle();
+        if (ice == null) ice = new Toggle();
+        if (ash == null) ash = new Toggle();
+        if (snowballs == null) snowballs = new Toggle();
         if (raindrops == null) raindrops = new Toggle();
         if (breathSpot == null) breathSpot = new Toggle();
         if (wipe == null) wipe = new Toggle();
@@ -120,6 +135,12 @@ public final class LivingGlassConfig {
         timing.frostMeltSeconds = Math.max(timing.frostMeltSeconds, 0.5);
         timing.dryingSeconds = Math.max(timing.dryingSeconds, 0.0);
         timing.meltSeconds = Math.max(timing.meltSeconds, 0.5);
+        timing.iceBuildSeconds = Math.max(timing.iceBuildSeconds, 0.5);
+        timing.iceFoggedSeconds = Math.max(timing.iceFoggedSeconds, 0.5);
+        timing.ashBuildSeconds = Math.max(timing.ashBuildSeconds, 0.5);
+        timing.ashSideBuildSeconds = Math.max(timing.ashSideBuildSeconds, 0.5);
+        timing.ashFadeSeconds = Math.max(timing.ashFadeSeconds, 0.5);
+        timing.snowSeconds = Math.max(timing.snowSeconds, 1);
         climate.heatScanRadius = Math.clamp(climate.heatScanRadius, 1, 16);
     }
 

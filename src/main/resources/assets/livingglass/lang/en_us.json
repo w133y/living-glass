@@ -29,5 +29,14 @@
   "livingglass.config.scan_radius": "Window search radius: %s",
   "livingglass.config.scan_budget": "Blocks checked per tick: %s",
   "livingglass.config.render_radius": "Render distance: %s",
-  "livingglass.config.tracked_max": "Max tracked windows: %s"
+  "livingglass.config.tracked_max": "Max tracked windows: %s",
+  "livingglass.config.ice": "Outside ice: %s",
+  "livingglass.config.ash": "Ash from fire: %s",
+  "livingglass.config.snowballs": "Snowball marks: %s",
+  "livingglass.config.ice_build": "Outside ice build-up: %s",
+  "livingglass.config.ice_fogged": "Ice on fogged glass: %s",
+  "livingglass.config.ash_build": "Ash under fire: %s",
+  "livingglass.config.ash_side": "Ash beside fire: %s",
+  "livingglass.config.ash_fade": "Ash fades after: %s",
+  "livingglass.config.snow": "Snowball marks last: %s"
 }

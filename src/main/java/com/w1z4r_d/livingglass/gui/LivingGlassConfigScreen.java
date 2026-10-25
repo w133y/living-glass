@@ -65,7 +65,10 @@ public class LivingGlassConfigScreen extends Screen {
         toggle("breath_spot", right, y + ROW * 2, () -> c.breathSpot.enabled, v -> c.breathSpot.enabled = v);
         toggle("wipe", left, y + ROW * 3, () -> c.wipe.enabled, v -> c.wipe.enabled = v);
         toggle("tint_stained_glass", right, y + ROW * 3, () -> c.tintStainedGlass, v -> c.tintStainedGlass = v);
-        int navY = y + ROW * 4 + 8;
+        toggle("ice", left, y + ROW * 4, () -> c.ice.enabled, v -> c.ice.enabled = v);
+        toggle("ash", right, y + ROW * 4, () -> c.ash.enabled, v -> c.ash.enabled = v);
+        toggle("snowballs", left, y + ROW * 5, () -> c.snowballs.enabled, v -> c.snowballs.enabled = v);
+        int navY = y + ROW * 6 + 8;
         int navW = (COLUMN * 2 + GAP - 2 * 4) / 3;
         int x = left;
         for (Page sub : new Page[] {Page.EFFECTS, Page.CLIMATE, Page.PERFORMANCE}) {
@@ -74,7 +77,7 @@ public class LivingGlassConfigScreen extends Screen {
                     .bounds(x, navY, navW, 20).build());
             x += navW + 4;
         }
-        return 5;
+        return 7;
     }
 
     private int effectsPage(LivingGlassConfig c, int left, int right, int y) {
@@ -85,8 +88,14 @@ public class LivingGlassConfigScreen extends Screen {
         slider("frost_build", right, y + ROW, 10, 300, 10, t.frostBuildSeconds, v -> t.frostBuildSeconds = v, "%.0f s");
         slider("frost_melt", left, y + ROW * 2, 5, 180, 5, t.frostMeltSeconds, v -> t.frostMeltSeconds = v, "%.0f s");
         slider("drying", right, y + ROW * 2, 0, 60, 5, t.dryingSeconds, v -> t.dryingSeconds = v, "%.0f s");
-        slider("melt", left, y + ROW * 3, 5, 120, 5, t.meltSeconds, v -> t.meltSeconds = v, "%.0f s");
-        return 4;
+        slider("melt", right, y + ROW * 3, 5, 120, 5, t.meltSeconds, v -> t.meltSeconds = v, "%.0f s");
+        slider("ice_build", left, y + ROW * 3, 30, 600, 10, t.iceBuildSeconds, v -> t.iceBuildSeconds = v, "%.0f s");
+        slider("ice_fogged", left, y + ROW * 4, 10, 600, 10, t.iceFoggedSeconds, v -> t.iceFoggedSeconds = v, "%.0f s");
+        slider("ash_build", right, y + ROW * 4, 1, 60, 1, t.ashBuildSeconds, v -> t.ashBuildSeconds = v, "%.0f s");
+        slider("ash_side", left, y + ROW * 5, 5, 300, 5, t.ashSideBuildSeconds, v -> t.ashSideBuildSeconds = v, "%.0f s");
+        slider("ash_fade", right, y + ROW * 5, 10, 600, 10, t.ashFadeSeconds, v -> t.ashFadeSeconds = v, "%.0f s");
+        slider("snow", left, y + ROW * 6, 5, 120, 5, t.snowSeconds, v -> t.snowSeconds = v, "%.0f s");
+        return 7;
     }
 
     private int climatePage(LivingGlassConfig c, int left, int right, int y) {

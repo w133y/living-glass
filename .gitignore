@@ -19,6 +19,10 @@ remappedSrc/
 .settings/
 bin/
 
+
+AGENTS.md
+
+
 # OS
 .DS_Store
 Thumbs.db

@@ -2,6 +2,7 @@ package com.w1z4r_d.livingglass;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import com.w1z4r_d.livingglass.compat.Compat;
+import com.w1z4r_d.livingglass.decal.DecalTracker;
 import com.w1z4r_d.livingglass.glass.GlassState;
 import com.w1z4r_d.livingglass.glass.GlassTracker;
 import com.w1z4r_d.livingglass.render.OverlayRenderer;
@@ -45,6 +46,7 @@ public class LivingGlassClient implements ClientModInitializer {
                 config.save();
             }
             GlassTracker.INSTANCE.tick(client);
+            DecalTracker.INSTANCE.tick(client);
             if (config.enabled && config.debug && client.level != null && client.level.getGameTime() % 5 == 0) {
                 Compat.overlayMessage(client, debugLine(client));
             }

@@ -108,6 +108,35 @@ def frost(mask, stage, fern):
     return img
 
 
+def ice_dist(x, y, mask):
+    """Outside ice grows mostly from the bottom of the window: the bottom frame counts as much nearer."""
+    d = [99.0]
+    if mask & 4: d.append((S - 1 - y) * 0.7)
+    if mask & 1: d.append(x * 1.9)
+    if mask & 2: d.append((S - 1 - x) * 1.9)
+    if mask & 8: d.append(y * 2.6)
+    return min(d)
+
+
+def ice(mask, stage, fern):
+    """Outside ice: bluer than the inside frost, thickest at the bottom of the window."""
+    reach = STAGE_REACH[stage]
+    img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    for y in range(S):
+        for x in range(S):
+            d = ice_dist(x, y, mask) + fuzz[y][x]
+            if fern[y][x] < reach * 0.8:
+                px = (215, 236, 255, 235)  # glint on a crystal
+            elif d < reach - 2:
+                px = (168, 204, 246, 210 if d < 2 else 180)
+            elif d < reach:
+                px = (150, 192, 242, 120)  # thin growing front
+            else:
+                continue
+            img.putpixel((x, y), px)
+    return img
+
+
 for variant in range(VARIANTS):
     roll(variant)
     for mask in range(16):
@@ -115,4 +144,8 @@ for variant in range(VARIANTS):
         fern = ferns(mask, random.Random(100 + mask + variant * 1000))
         for stage in range(4):
             frost(mask, stage, fern).save(f"{out}/frost_{variant}_{mask}_{stage}.png")
+        # Crystals for the outside ice only start at the bottom frame
+        bottom_ferns = ferns(mask & 4, random.Random(300 + mask + variant * 1000))
+        for stage in range(4):
+            ice(mask, stage, bottom_ferns).save(f"{out}/ice_{variant}_{mask}_{stage}.png")
 print("ok")

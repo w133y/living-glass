@@ -14,6 +14,8 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.tags.TagKey;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.HashMap;
@@ -57,6 +59,10 @@ public final class Compat {
                 ? RenderTypes.entityTranslucent(Identifier.fromNamespaceAndPath(namespace, path))
                 : RenderTypes.entityTranslucentEmissive(Identifier.fromNamespaceAndPath(namespace, path)));
         collector.submitCustomGeometry(poseStack, type, renderer);
+    }
+
+    public static boolean isSnowball(Entity entity) {
+        return entity.getType() == EntityType.SNOWBALL;
     }
 
     public static Vec3 cameraPos(Minecraft minecraft) {

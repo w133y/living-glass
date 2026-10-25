@@ -38,20 +38,15 @@ public final class GlassState {
     /** RGB tint for condensation, 0xFFFFFF for clear glass. */
     public int tint;
 
-    public float fog, frost, drops;
-    public float fogTarget, frostTarget, dropTarget;
+    public float fog, frost, drops, ice;
+    public float fogTarget, frostTarget, dropTarget, iceTarget;
 
     // Last climate inputs, shown in the debug HUD; NaN until the first climate update
     public float outsideTemp = Float.NaN, warmth;
 
-    /**
-     * Texture of the main face and the one it is fading from. When a neighbouring window is built or broken the
-     * frame of the merged window moves, and the face melts into its new texture instead of switching at once.
-     */
-    public int tex = -1, prevTex = -1;
-    public float texBlend = 1;
-    /** The melt runs backwards (the neighbour was put back), so cells switch in reverse order. */
-    public boolean meltReversed;
+    /** Texture of the inside face and of the outside ice, each melting into a new frame shape on its own. */
+    public final Melt look = new Melt();
+    public final Melt iceLook = new Melt();
 
     /** Any breath or wipe patch still visible; refreshed every tick. */
     public boolean patches;
@@ -62,6 +57,8 @@ public final class GlassState {
     public final float[] shadeSide = new float[4];
     /** Packed lightmap coordinates of the same air blocks, used instead of shade when a shader pack lights the overlays. */
     public int lightInner, lightTop;
+    public float shadeOuter;
+    public int lightOuter;
     public final int[] lightSide = new int[4];
     /** Windows of the same room directly below, above, left and right, for merging large windows. */
     public int below, above, left, right;
