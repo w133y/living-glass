@@ -36,6 +36,7 @@ public final class DecalTracker {
 
     private static final int TARGET_INTERVAL_TICKS = 10;
     private static final int MAX_SPLATS = 256;
+    private static final int MAX_STRIKES = 32;
     private static final double SNOWBALL_RANGE = 64;
     private static final Direction[] FIRE_SIDES = {Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST, Direction.UP};
 
@@ -73,9 +74,17 @@ public final class DecalTracker {
     public record Splat(long pos, Direction face, double x, double y, double z, int seed, long born) {
     }
 
+    /** A lightning strike: the ground block it hit and the strike point in world coordinates (x, z on the pixel grid). */
+    public record Strike(long ground, double x, double z, int seed, long born) {
+    }
+
     private final LongOpenHashSet fires = new LongOpenHashSet();
     private final Map<Key, Ash> ash = new HashMap<>();
     private final List<Splat> splats = new ArrayList<>();
+    private final List<Strike> strikes = new ArrayList<>();
+    /** Lightning bolts already turned into a strike, so each leaves one mark. */
+    private final IntOpenHashSet seenBolts = new IntOpenHashSet();
+    private final IntOpenHashSet boltsNow = new IntOpenHashSet();
     /** Last two positions of every snowball in range, to find where it hit once it is gone. */
     private final Int2ObjectOpenHashMap<Vec3[]> snowballs = new Int2ObjectOpenHashMap<>();
     private final IntOpenHashSet alive = new IntOpenHashSet();
@@ -91,6 +100,10 @@ public final class DecalTracker {
 
     public List<Splat> splats() {
         return splats;
+    }
+
+    public List<Strike> strikes() {
+        return strikes;
     }
 
     public long tick() {
@@ -124,6 +137,8 @@ public final class DecalTracker {
             ash.clear();
             splats.clear();
             snowballs.clear();
+            strikes.clear();
+            seenBolts.clear();
             level = mc.level;
         }
         LivingGlassConfig cfg = LivingGlassConfig.get();
@@ -136,6 +151,11 @@ public final class DecalTracker {
         }
         long life = (long) (cfg.timing.snowSeconds * 20);
         splats.removeIf(s -> tick - s.born > life);
+        if (cfg.lightning.enabled) {
+            trackLightning();
+        }
+        long scorchLife = (long) (cfg.timing.lightningSeconds * 20);
+        strikes.removeIf(s -> tick - s.born > scorchLife);
 
         if (tick % TARGET_INTERVAL_TICKS == 0) {
             updateAshTargets(mc.player.blockPosition(), cfg);
@@ -205,6 +225,36 @@ public final class DecalTracker {
         BlockState state = level.getBlockState(pos);
         return !state.isAir() && !(state.getBlock() instanceof BaseFireBlock)
                 && !state.getShape(level, pos).getFaceShape(face).isEmpty();
+    }
+
+    /** Every new lightning bolt leaves a burn mark on the ground it struck. */
+    private void trackLightning() {
+        boltsNow.clear();
+        for (Entity e : ((net.minecraft.client.multiplayer.ClientLevel) level).entitiesForRendering()) {
+            if (!Compat.isLightning(e)) {
+                continue;
+            }
+            boltsNow.add(e.getId());
+            if (seenBolts.add(e.getId())) {
+                strike(e.position());
+            }
+        }
+        seenBolts.retainAll(boltsNow);
+    }
+
+    private void strike(Vec3 at) {
+        BlockPos pos = BlockPos.containing(at.x, at.y - 0.05, at.z);
+        for (int i = 0; i < 4 && !hasFace(pos, Direction.UP); i++) {
+            pos = pos.below();
+        }
+        if (!hasFace(pos, Direction.UP)) {
+            return;
+        }
+        if (strikes.size() >= MAX_STRIKES) {
+            strikes.remove(0);
+        }
+        strikes.add(new Strike(pos.asLong(), Math.round(at.x * 16) / 16.0, Math.round(at.z * 16) / 16.0,
+                (int) (tick * 0x632BE5ABL ^ pos.asLong()), tick));
     }
 
     private void trackSnowballs(Vec3 player) {

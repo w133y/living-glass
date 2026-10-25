@@ -38,5 +38,7 @@
   "livingglass.config.ash_build": "Ash under fire: %s",
   "livingglass.config.ash_side": "Ash beside fire: %s",
   "livingglass.config.ash_fade": "Ash fades after: %s",
-  "livingglass.config.snow": "Snowball marks last: %s"
+  "livingglass.config.snow": "Snowball marks last: %s",
+  "livingglass.config.lightning": "Lightning scorch: %s",
+  "livingglass.config.lightning_time": "Lightning scorch lasts: %s"
 }

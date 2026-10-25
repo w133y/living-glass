@@ -55,6 +55,8 @@ public final class LivingGlassConfig {
         public double ashFadeSeconds = 120;
         /** How long a snowball splat stays before it is gone. */
         public double snowSeconds = 20;
+        /** How long the burn mark of a lightning strike stays on the ground. */
+        public double lightningSeconds = 180;
     }
 
     public static final class Climate {
@@ -71,6 +73,7 @@ public final class LivingGlassConfig {
     public Toggle ice = new Toggle();
     public Toggle ash = new Toggle();
     public Toggle snowballs = new Toggle();
+    public Toggle lightning = new Toggle();
     public Toggle raindrops = new Toggle();
     public Toggle breathSpot = new Toggle();
     public Toggle wipe = new Toggle();
@@ -115,6 +118,7 @@ public final class LivingGlassConfig {
         if (ice == null) ice = new Toggle();
         if (ash == null) ash = new Toggle();
         if (snowballs == null) snowballs = new Toggle();
+        if (lightning == null) lightning = new Toggle();
         if (raindrops == null) raindrops = new Toggle();
         if (breathSpot == null) breathSpot = new Toggle();
         if (wipe == null) wipe = new Toggle();
@@ -141,6 +145,7 @@ public final class LivingGlassConfig {
         timing.ashSideBuildSeconds = Math.max(timing.ashSideBuildSeconds, 0.5);
         timing.ashFadeSeconds = Math.max(timing.ashFadeSeconds, 0.5);
         timing.snowSeconds = Math.max(timing.snowSeconds, 1);
+        timing.lightningSeconds = Math.max(timing.lightningSeconds, 1);
         climate.heatScanRadius = Math.clamp(climate.heatScanRadius, 1, 16);
     }
 

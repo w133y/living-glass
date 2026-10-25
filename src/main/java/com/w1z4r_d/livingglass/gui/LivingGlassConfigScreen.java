@@ -68,6 +68,7 @@ public class LivingGlassConfigScreen extends Screen {
         toggle("ice", left, y + ROW * 4, () -> c.ice.enabled, v -> c.ice.enabled = v);
         toggle("ash", right, y + ROW * 4, () -> c.ash.enabled, v -> c.ash.enabled = v);
         toggle("snowballs", left, y + ROW * 5, () -> c.snowballs.enabled, v -> c.snowballs.enabled = v);
+        toggle("lightning", right, y + ROW * 5, () -> c.lightning.enabled, v -> c.lightning.enabled = v);
         int navY = y + ROW * 6 + 8;
         int navW = (COLUMN * 2 + GAP - 2 * 4) / 3;
         int x = left;
@@ -95,6 +96,7 @@ public class LivingGlassConfigScreen extends Screen {
         slider("ash_side", left, y + ROW * 5, 5, 300, 5, t.ashSideBuildSeconds, v -> t.ashSideBuildSeconds = v, "%.0f s");
         slider("ash_fade", right, y + ROW * 5, 10, 600, 10, t.ashFadeSeconds, v -> t.ashFadeSeconds = v, "%.0f s");
         slider("snow", left, y + ROW * 6, 5, 120, 5, t.snowSeconds, v -> t.snowSeconds = v, "%.0f s");
+        slider("lightning_time", right, y + ROW * 6, 20, 600, 10, t.lightningSeconds, v -> t.lightningSeconds = v, "%.0f s");
         return 7;
     }
 

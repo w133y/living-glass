@@ -65,6 +65,10 @@ public final class Compat {
         return entity.getType() == EntityTypes.SNOWBALL;
     }
 
+    public static boolean isLightning(Entity entity) {
+        return entity.getType() == EntityTypes.LIGHTNING_BOLT;
+    }
+
     public static Vec3 cameraPos(Minecraft minecraft) {
         return minecraft.gameRenderer.mainCamera().position();
     }

@@ -16,6 +16,8 @@ Client-side only. No new blocks, no crafting, works on any server.
 
 ⛄ **Snowball marks:** a thrown snowball leaves a splat on any block it hits for about 20 seconds.
 
+⚡ **Lightning scorch:** a strike leaves a burn mark with glowing embers on the ground around it, fading after a few minutes.
+
 🌫️ **Condensation:** a cosy cabin with a lit furnace in a snowy biome slowly fogs up. The fog is densest along the frame and at the bottom.
 
 ✋ **Wipe:** right-click the glass with an empty hand to clear a spot. It slowly fogs up again.

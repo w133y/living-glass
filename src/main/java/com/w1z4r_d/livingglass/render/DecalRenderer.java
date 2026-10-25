@@ -29,7 +29,14 @@ final class DecalRenderer {
     private static final FloatArrayList[] snowLists = lists(VARIANTS);
     /** Decals sit just off the block surface. */
     private static final double LIFT = 0.003;
-    private static final float SPLAT_HALF = 0.3f;
+    /** Snow splat texture is 10 pixels wide, at the same pixel size as the block textures. */
+    private static final float SPLAT_HALF = 5 / 16f;
+    /** The lightning scorch texture is 64 pixels, four blocks across. */
+    private static final float SCORCH_HALF = 2;
+    /** Embers glow for this long after the strike, then only the burn mark is left. */
+    private static final int EMBER_TICKS = 200;
+    private static final FloatArrayList[] scorchLists = lists(VARIANTS);
+    private static final FloatArrayList[] emberLists = lists(VARIANTS);
     /** A splat fades out over the last quarter of its life. */
     private static final float SPLAT_FADE = 0.25f;
     private static final int CACHE_TICKS = 20;
@@ -50,6 +57,12 @@ final class DecalRenderer {
             list.clear();
         }
         for (FloatArrayList list : snowLists) {
+            list.clear();
+        }
+        for (FloatArrayList list : scorchLists) {
+            list.clear();
+        }
+        for (FloatArrayList list : emberLists) {
             list.clear();
         }
         DecalTracker decals = DecalTracker.INSTANCE;
@@ -75,6 +88,12 @@ final class DecalRenderer {
                 drawSplat(level, s, pos, cam, alpha);
             }
         }
+        long scorchLife = (long) (cfg.timing.lightningSeconds * 20);
+        for (DecalTracker.Strike st : decals.strikes()) {
+            if (BlockPos.of(st.ground()).distToCenterSqr(cam) <= maxDist) {
+                drawStrike(level, st, cam, now - st.born(), scorchLife);
+            }
+        }
         for (int i = 0; i < ashLists.length; i++) {
             String name = i < SIDE_BASE ? "ash_full_" + i / 16 + "_" + i % 16
                     : "ash_side_" + (i - SIDE_BASE) / 4 + "_" + (i - SIDE_BASE) % 4;
@@ -82,6 +101,8 @@ final class DecalRenderer {
         }
         for (int i = 0; i < VARIANTS; i++) {
             OverlayRenderer.submit(collector, poseStack, "snow_" + i, snowLists[i]);
+            OverlayRenderer.submit(collector, poseStack, "lightning_scorch_" + i, scorchLists[i]);
+            OverlayRenderer.submit(collector, poseStack, "lightning_embers_" + i, emberLists[i]);
         }
     }
 
@@ -169,6 +190,9 @@ final class DecalRenderer {
         Direction face = s.face();
         Direction t1 = across(face), t2 = up(face);
         double[] local = {s.x(), s.y(), s.z()};
+        // On the block's pixel grid, so splat pixels line up with the block's own pixels
+        local[t1.getAxis().ordinal()] = Math.round(local[t1.getAxis().ordinal()] * 16) / 16.0;
+        local[t2.getAxis().ordinal()] = Math.round(local[t2.getAxis().ordinal()] * 16) / 16.0;
         int normal = face.getAxis().ordinal();
         boolean positive = face.getAxisDirection() == Direction.AxisDirection.POSITIVE;
         double surface = local[normal];
@@ -176,7 +200,7 @@ final class DecalRenderer {
         FloatArrayList out = snowLists[Math.floorMod(s.seed(), VARIANTS)];
         for (int da = -1; da <= 1; da++) {
             for (int db = -1; db <= 1; db++) {
-                splatPart(level, out, pos.relative(t1, da).relative(t2, db), face, a - da, b - db, surface, cam, alpha);
+                splatPart(level, out, pos.relative(t1, da).relative(t2, db), face, a - da, b - db, surface, cam, alpha, SPLAT_HALF, false);
             }
         }
         if (!atBoundary(face, surface)) {
@@ -196,7 +220,8 @@ final class DecalRenderer {
                 // that face, as far from the edge as it was on this one
                 folded[axis] = tPositive ? 1 : 0;
                 folded[normal] = surface + (positive ? toEdge : -toEdge);
-                splatPart(level, out, pos, t, coord(across(t), folded), coord(up(t), folded), tPositive ? 1 : 0, cam, alpha);
+                splatPart(level, out, pos, t, coord(across(t), folded), coord(up(t), folded), tPositive ? 1 : 0, cam, alpha,
+                        SPLAT_HALF, false);
             } else {
                 // Inside corner: the wall goes on, and a block in front of it stands out; climb its side face
                 BlockPos corner = side.relative(face);
@@ -204,7 +229,45 @@ final class DecalRenderer {
                 folded[axis] = tPositive ? 0 : 1;
                 folded[normal] = (positive ? 0 : 1) - (positive ? toEdge : -toEdge);
                 splatPart(level, out, corner, back, coord(across(back), folded), coord(up(back), folded),
-                        tPositive ? 0 : 1, cam, alpha);
+                        tPositive ? 0 : 1, cam, alpha, SPLAT_HALF, false);
+            }
+        }
+    }
+
+    /**
+     * A lightning burn mark on the top faces around the strike, following uneven ground: each column within reach
+     * gets its part on the highest open top face near the strike height. Embers glow over it while it is fresh.
+     */
+    private static void drawStrike(Level level, DecalTracker.Strike st, Vec3 cam, long age, long life) {
+        if (age >= life) {
+            return;
+        }
+        float fade = age < life * 2 / 3 ? 1 : (life - age) / (life / 3f);
+        float glow = age < EMBER_TICKS ? 1 - age / (float) EMBER_TICKS : 0;
+        BlockPos ground = BlockPos.of(st.ground());
+        int variant = Math.floorMod(st.seed(), VARIANTS);
+        int reach = (int) Math.ceil(SCORCH_HALF);
+        for (int dx = -reach; dx <= reach; dx++) {
+            for (int dz = -reach; dz <= reach; dz++) {
+                for (int dy = 1; dy >= -2; dy--) {
+                    BlockPos block = ground.offset(dx, dy, dz);
+                    BlockPos above = block.above();
+                    if (!DecalTracker.INSTANCE.hasFace(block, Direction.UP)
+                            || level.getBlockState(above).isCollisionShapeFullBlock(level, above)) {
+                        continue;
+                    }
+                    double surface = level.getBlockState(block).getShape(level, block).max(Direction.Axis.Y);
+                    // Floor face coordinates: x across, north up
+                    float ca = (float) (st.x() - block.getX());
+                    float cb = (float) (1 - (st.z() - block.getZ()));
+                    splatPart(level, scorchLists[variant], block, Direction.UP, ca, cb, surface, cam, fade * 0.9f,
+                            SCORCH_HALF, false);
+                    if (glow > 0) {
+                        splatPart(level, emberLists[variant], block, Direction.UP, ca, cb, surface, cam, glow,
+                                SCORCH_HALF, true);
+                    }
+                    break;
+                }
             }
         }
     }
@@ -215,16 +278,16 @@ final class DecalRenderer {
      * covered by a full block in front of it.
      */
     private static void splatPart(Level level, FloatArrayList out, BlockPos block, Direction face, float ca, float cb,
-                                  double surface, Vec3 cam, float alpha) {
-        if (ca + SPLAT_HALF <= 0 || ca - SPLAT_HALF >= 1 || cb + SPLAT_HALF <= 0 || cb - SPLAT_HALF >= 1) {
+                                  double surface, Vec3 cam, float alpha, float half, boolean glow) {
+        if (ca + half <= 0 || ca - half >= 1 || cb + half <= 0 || cb - half >= 1) {
             return;
         }
         float[] shape = faceRect(level, block, face, surface);
         if (shape == null) {
             return;
         }
-        float a0 = Math.max(shape[0], ca - SPLAT_HALF), a1 = Math.min(shape[1], ca + SPLAT_HALF);
-        float b0 = Math.max(shape[2], cb - SPLAT_HALF), b1 = Math.min(shape[3], cb + SPLAT_HALF);
+        float a0 = Math.max(shape[0], ca - half), a1 = Math.min(shape[1], ca + half);
+        float b0 = Math.max(shape[2], cb - half), b1 = Math.min(shape[3], cb + half);
         if (a1 <= a0 || b1 <= b0) {
             return;
         }
@@ -233,12 +296,13 @@ final class DecalRenderer {
             return;
         }
         boolean lit = OverlayRenderer.lit;
-        int color = OverlayRenderer.argb(alpha, 0xFFFFFF, lit ? 1 : OverlayRenderer.shade(level, air));
-        int light = lit ? OverlayRenderer.packedLight(level, air) : OverlayRenderer.FULL_BRIGHT;
+        // Glowing parts (embers) stay bright in the dark and under shaders
+        int color = OverlayRenderer.argb(alpha, 0xFFFFFF, lit || glow ? 1 : OverlayRenderer.shade(level, air));
+        int light = lit && !glow ? OverlayRenderer.packedLight(level, air) : OverlayRenderer.FULL_BRIGHT;
         // Texture coordinates follow the cut rectangle, so the splat is cut off at the edge, not squashed
-        float size = 2 * SPLAT_HALF;
-        float u0 = (a0 - (ca - SPLAT_HALF)) / size, u1 = (a1 - (ca - SPLAT_HALF)) / size;
-        float v0 = 1 - (b0 - (cb - SPLAT_HALF)) / size, v1 = 1 - (b1 - (cb - SPLAT_HALF)) / size;
+        float size = 2 * half;
+        float u0 = (a0 - (ca - half)) / size, u1 = (a1 - (ca - half)) / size;
+        float v0 = 1 - (b0 - (cb - half)) / size, v1 = 1 - (b1 - (cb - half)) / size;
         double plane = surface + (face.getAxisDirection() == Direction.AxisDirection.POSITIVE ? LIFT : -LIFT);
         vertex(out, block, face, plane, a0, b0, cam, u0, v0, color);
         vertex(out, block, face, plane, a1, b0, cam, u1, v0, color);
