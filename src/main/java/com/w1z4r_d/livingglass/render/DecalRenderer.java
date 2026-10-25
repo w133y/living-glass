@@ -88,14 +88,22 @@ final class DecalRenderer {
         a.shade = OverlayRenderer.shade(level, pos.relative(a.face));
         a.light = OverlayRenderer.packedLight(level, pos.relative(a.face));
         Direction t1 = across(a.face), t2 = up(a.face);
-        a.mask = (ashy(all, pos.relative(t1.getOpposite()), a.face) ? 0 : 1) | (ashy(all, pos.relative(t1), a.face) ? 0 : 2);
+        a.mask = (joined(all, pos, a.face, t1.getOpposite()) ? 0 : 1) | (joined(all, pos, a.face, t1) ? 0 : 2);
         if (a.kind == Kind.FULL) {
-            a.mask |= (ashy(all, pos.relative(t2.getOpposite()), a.face) ? 0 : 4) | (ashy(all, pos.relative(t2), a.face) ? 0 : 8);
+            a.mask |= (joined(all, pos, a.face, t2.getOpposite()) ? 0 : 4) | (joined(all, pos, a.face, t2) ? 0 : 8);
         }
         VoxelShape shape = level.getBlockState(pos).getShape(level, pos);
         Direction.Axis axis = a.face.getAxis();
         boolean positive = a.face.getAxisDirection() == Direction.AxisDirection.POSITIVE;
         a.plane = shape.isEmpty() ? (positive ? 1 : 0) : positive ? shape.max(axis) + LIFT : shape.min(axis) - LIFT;
+    }
+
+    /**
+     * Whether the ash on face continues past its edge toward t: onto the next block of the same floor or wall, or
+     * round the inside corner onto the wall (or floor) that meets it there.
+     */
+    private static boolean joined(Map<DecalTracker.Key, Ash> all, BlockPos pos, Direction face, Direction t) {
+        return ashy(all, pos.relative(t), face) || ashy(all, pos.relative(t).relative(face), t.getOpposite());
     }
 
     private static boolean ashy(Map<DecalTracker.Key, Ash> all, BlockPos pos, Direction face) {
@@ -178,6 +186,40 @@ final class DecalRenderer {
                 vertex(out, block, face, plane, a0, b1, cam, u0, v1, color);
                 end(out, face, light);
             }
+        }
+        // Round an outside edge: the part past the edge folds onto the face of the same block on that side
+        for (Direction t : new Direction[] {t1, t1.getOpposite(), t2, t2.getOpposite()}) {
+            int axis = t.getAxis().ordinal();
+            boolean tPositive = t.getAxisDirection() == Direction.AxisDirection.POSITIVE;
+            double toEdge = tPositive ? 1 - local[axis] : local[axis];
+            BlockPos air = pos.relative(t);
+            if (toEdge >= SPLAT_HALF || !DecalTracker.INSTANCE.hasFace(pos, t)
+                    || level.getBlockState(air).isCollisionShapeFullBlock(level, air)) {
+                continue;
+            }
+            // Unfold: the splat centre lands outside the folded face, as far from the edge as it was before folding
+            double[] folded = local.clone();
+            folded[axis] = tPositive ? 1 : 0;
+            int normal = face.getAxis().ordinal();
+            folded[normal] = local[normal] + (positive ? toEdge : -toEdge);
+            float fa = coord(across(t), folded), fb = coord(up(t), folded);
+            float a0 = Math.max(0, fa - SPLAT_HALF), a1 = Math.min(1, fa + SPLAT_HALF);
+            float b0 = Math.max(0, fb - SPLAT_HALF), b1 = Math.min(1, fb + SPLAT_HALF);
+            if (a1 <= a0 || b1 <= b0) {
+                continue;
+            }
+            boolean lit = OverlayRenderer.lit;
+            int color = OverlayRenderer.argb(alpha, 0xFFFFFF, lit ? 1 : OverlayRenderer.shade(level, air));
+            int light = lit ? OverlayRenderer.packedLight(level, air) : OverlayRenderer.FULL_BRIGHT;
+            double foldPlane = (tPositive ? 1 : 0) + (tPositive ? LIFT : -LIFT);
+            float size = 2 * SPLAT_HALF;
+            float u0 = (a0 - (fa - SPLAT_HALF)) / size, u1 = (a1 - (fa - SPLAT_HALF)) / size;
+            float v0 = 1 - (b0 - (fb - SPLAT_HALF)) / size, v1 = 1 - (b1 - (fb - SPLAT_HALF)) / size;
+            vertex(out, pos, t, foldPlane, a0, b0, cam, u0, v0, color);
+            vertex(out, pos, t, foldPlane, a1, b0, cam, u1, v0, color);
+            vertex(out, pos, t, foldPlane, a1, b1, cam, u1, v1, color);
+            vertex(out, pos, t, foldPlane, a0, b1, cam, u0, v1, color);
+            end(out, t, light);
         }
     }
 

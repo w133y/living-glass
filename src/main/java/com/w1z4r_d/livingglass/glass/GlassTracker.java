@@ -177,7 +177,27 @@ public final class GlassTracker {
             return;
         }
         if (!states.containsKey(key) && makeRoom(key)) {
+            inheritFromWindow(pos, gs);
             states.put(key, gs);
+        }
+    }
+
+    /**
+     * New glass in an existing window takes over its neighbours' fog, frost and ice, so the window keeps freezing
+     * as one surface instead of the new block starting from clear glass.
+     */
+    private void inheritFromWindow(BlockPos pos, GlassState gs) {
+        if (!gs.isWindow()) {
+            return;
+        }
+        Direction across = gs.inner.getClockWise();
+        for (BlockPos n : new BlockPos[] {pos.above(), pos.below(), pos.relative(across), pos.relative(across.getOpposite())}) {
+            GlassState other = states.get(n.asLong());
+            if (other != null && other.inner == gs.inner) {
+                gs.fog = Math.max(gs.fog, other.fog);
+                gs.frost = Math.max(gs.frost, other.frost);
+                gs.ice = Math.max(gs.ice, other.ice);
+            }
         }
     }
 
@@ -420,8 +440,9 @@ public final class GlassTracker {
             gs.patches = gs.hasPatches();
             gs.look.tick(t.meltSeconds);
             gs.iceLook.tick(t.meltSeconds);
-            // Outside ice forms faster when the glass is already fogged from inside
-            gs.ice = approach(gs.ice, gs.iceTarget, gs.fog > ICE_FOGGED_THRESHOLD ? t.iceFoggedSeconds : t.iceBuildSeconds,
+            // Outside ice forms faster on glass that fogs from inside; the target, not the current fog, so all blocks
+            // of a window freeze at the same pace
+            gs.ice = approach(gs.ice, gs.iceTarget, gs.fogTarget > ICE_FOGGED_THRESHOLD ? t.iceFoggedSeconds : t.iceBuildSeconds,
                     t.frostMeltSeconds);
         }
         if (cfg.breathSpot.enabled) {
