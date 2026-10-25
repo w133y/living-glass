@@ -296,12 +296,12 @@ public final class OverlayRenderer {
     private static void outsideIce(GlassState gs, BlockPos p, Vec3 cam, int below, int above, int left, int right) {
         Direction out = gs.inner.getOpposite();
         int style = faceStyle(gs, out);
-        boolean flipU = (style & 4) != 0, flipV = (style & 8) != 0;
-        float u0 = flipU ? 1 : 0, u1 = flipU ? 0 : 1, v0 = flipV ? 1 : 0, v1 = flipV ? 0 : 1;
+        // Only mirrored across: the ice grows from the bottom, so it must never be turned upside down
+        boolean flipU = (style & 4) != 0;
+        float u0 = flipU ? 1 : 0, u1 = flipU ? 0 : 1, v0 = 0, v1 = 1;
         // Seen from outside, the room's right is on the left
         int outLeft = right, outRight = left;
-        gs.iceLook.show((style & 3) * MASKS + frameMask(flipU ? outRight : outLeft, flipU ? outLeft : outRight,
-                flipV ? above : below, flipV ? below : above));
+        gs.iceLook.show((style & 3) * MASKS + frameMask(flipU ? outRight : outLeft, flipU ? outLeft : outRight, below, above));
         float seen = seenFrom(cam, p, out, gs);
         stages(ice, gs.iceLook, gs.ice, p, out, gs, cam, u0, v0, u1, v1, gs.iceLook.melting() ? GRID : 1,
                 lit ? 1 : gs.shadeOuter, lit ? gs.lightOuter : FULL_BRIGHT, (x, y) -> seen);

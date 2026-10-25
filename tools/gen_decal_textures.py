@@ -43,28 +43,35 @@ def edge_dist(x, y, mask):
 
 
 def soot(depth):
-    """Colour from charred black in the middle to brown-grey at the thin edge (depth 0..1)."""
-    edge, core = (58, 50, 44), (16, 14, 13)
+    """Colour from brown-grey at the thin edge to charred black in the middle (depth 0..1)."""
+    edge, core = (62, 54, 47), (18, 16, 15)
     return tuple(int(edge[i] + (core[i] - edge[i]) * depth) for i in range(3))
+
+
+def smoothstep(e0, e1, v):
+    t = max(0.0, min(1.0, (v - e0) / (e1 - e0)))
+    return t * t * (3 - 2 * t)
 
 
 for variant in range(VARIANTS):
     rnd = random.Random(7 + variant * 1000)
-    blot = smooth_noise(rnd, 3, 2.2)      # wobbles the edge of the scorch
-    shade = smooth_noise(rnd, 4, 0.25)    # patches of darker and lighter soot
-    flakes = {(rnd.randrange(S), rnd.randrange(S)) for _ in range(6)}
+    blot = smooth_noise(rnd, 3, 2.0)      # wobbles the edge of the scorch
+    shade = smooth_noise(rnd, 4, 0.18)    # patches of darker and lighter soot
+    speck = [[rnd.random() for _ in range(S)] for _ in range(S)]
 
     for mask in range(16):
         img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
         for y in range(S):
             for x in range(S):
                 d = edge_dist(x, y, mask) + blot[y][x]
-                if d < 1.0:
+                body = smoothstep(0.4, 3.4, d)  # a soft, ragged rim about three pixels wide
+                if body <= 0.05:
                     continue
-                depth = max(0.0, min(1.0, (d - 1.0) / 4.0 + shade[y][x]))
-                a = int(100 + 105 * min(1.0, (d - 1.0) / 2.5))
-                c = (92, 86, 80) if (x, y) in flakes and depth > 0.5 else soot(depth)
-                img.putpixel((x, y), (*c, a))
+                depth = max(0.0, min(1.0, body + shade[y][x]))
+                c = soot(depth)
+                if speck[y][x] < 0.07 and depth > 0.6:
+                    c = tuple(v + 14 for v in c)  # a few slightly greyer flecks of ash
+                img.putpixel((x, y), (*c, int(25 + 175 * body)))
         img.save(f"{out}/ash_full_{variant}_{mask}.png")
 
     for mask in range(4):
@@ -72,14 +79,13 @@ for variant in range(VARIANTS):
         for y in range(S):
             for x in range(S):
                 rise = (S - 0.5 - y) + blot[y][x] * 1.2  # pixels up from the bottom, with a wavy top
-                side = edge_dist(x, y, mask) + blot[y][x] * 0.6
-                if rise > 8.5 or side < 1.0:
+                body = 1 - smoothstep(1.5, 9.0, rise)
+                side = smoothstep(0.8, 3.5, edge_dist(x, y, mask) + blot[y][x] * 0.6)
+                a = body * side
+                if a <= 0.05:
                     continue
-                depth = max(0.0, min(1.0, 1 - rise / 8.5 + shade[y][x]))
-                a = int(90 + 140 * depth)
-                if side < 2.5:
-                    a = int(a * (side - 1.0) / 1.5)
-                img.putpixel((x, y), (*soot(depth), max(0, a)))
+                depth = max(0.0, min(1.0, body + shade[y][x]))
+                img.putpixel((x, y), (*soot(depth), int(200 * a)))
         img.save(f"{out}/ash_side_{variant}_{mask}.png")
 
     # Snow splat: an opaque packed blob with a few flecks thrown out around it

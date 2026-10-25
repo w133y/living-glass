@@ -59,6 +59,8 @@ public final class DecalTracker {
         public int mask;
         /** Block-local position of the face plane along its normal, lifted just off the surface. */
         public double plane;
+        /** Part of the face the block's shape actually covers, in face coordinates {a0, a1, b0, b1}. */
+        public float[] rect;
 
         Ash(long pos, Direction face) {
             this.pos = pos;

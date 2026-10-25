@@ -43,8 +43,8 @@ public final class GlassTracker {
     private static final double LOW_BLOCK_HEIGHT = 0.2;
     /** Narrower uncovered strips of a face are not worth drawing raindrops on. */
     private static final float MIN_WET_SPAN = 0.2f;
-    /** Inside fog above this makes the outside ice form faster. */
-    private static final float ICE_FOGGED_THRESHOLD = 0.3f;
+    /** Inside fog target at which the outside ice forms at its fastest pace. */
+    private static final float ICE_FULLY_FOGGED = 0.5f;
     private static final float BREATH_BUILD_SECONDS = 3;
     private static final float BREATH_FADE_SECONDS = 10;
     private static final double BREATH_DISTANCE = 1.5;
@@ -440,9 +440,10 @@ public final class GlassTracker {
             gs.patches = gs.hasPatches();
             gs.look.tick(t.meltSeconds);
             gs.iceLook.tick(t.meltSeconds);
-            // Outside ice forms faster on glass that fogs from inside; the target, not the current fog, so all blocks
-            // of a window freeze at the same pace
-            gs.ice = approach(gs.ice, gs.iceTarget, gs.fogTarget > ICE_FOGGED_THRESHOLD ? t.iceFoggedSeconds : t.iceBuildSeconds,
+            // Outside ice forms faster on glass that fogs from inside, sliding smoothly between the two paces by how
+            // much the room fogs the glass (the target, so all blocks of a window freeze together)
+            double fogged = Math.min(1, gs.fogTarget / ICE_FULLY_FOGGED);
+            gs.ice = approach(gs.ice, gs.iceTarget, t.iceBuildSeconds + (t.iceFoggedSeconds - t.iceBuildSeconds) * fogged,
                     t.frostMeltSeconds);
         }
         if (cfg.breathSpot.enabled) {
