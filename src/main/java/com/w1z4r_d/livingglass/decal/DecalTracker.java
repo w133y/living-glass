@@ -43,8 +43,9 @@ public final class DecalTracker {
     private static final Direction[] FIRE_SIDES = {Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST, Direction.UP};
     /** How many columns a burn mark reaches either way from the struck one: four blocks across round any point of it. */
     public static final int STRIKE_REACH = 3;
-    /** How many posts or fences stacked on the ground a burn mark climbs at most. */
+    /** How many posts or fences stacked on the ground a burn mark climbs at most; the struck stack, all of it. */
     private static final int POST_HEIGHT = 4;
+    private static final int STRUCK_HEIGHT = 24;
 
     /** Full scorch under or behind a fire, or the lower half of a block standing next to one. */
     public enum Kind { FULL, SIDE }
@@ -274,8 +275,8 @@ public final class DecalTracker {
         if (groundHeight(pos) <= 0) {
             return;
         }
-        // A fence, post or lantern struck stands on the ground the mark spreads over
-        for (int i = 0; i < 3 && !fullFootprint(pos) && groundHeight(pos.below()) > 0; i++) {
+        // A fence, post or lantern struck stands on the ground the mark spreads over, however tall its stack
+        for (int i = 0; i < STRUCK_HEIGHT && !fullFootprint(pos) && groundHeight(pos.below()) > 0; i++) {
             pos = pos.below();
         }
         if (strikes.size() >= MAX_STRIKES) {
@@ -322,7 +323,7 @@ public final class DecalTracker {
                     // The ground and the posts, fences or lanterns stacked on it, however high the strike hit them
                     int groundY = groundY(surface[i]);
                     layers[i] = 1;
-                    for (int k = 1; k <= POST_HEIGHT; k++) {
+                    for (int k = 1; k <= (dx == 0 && dz == 0 ? STRUCK_HEIGHT : POST_HEIGHT); k++) {
                         BlockPos block = new BlockPos(pos.getX() + dx, groundY + k, pos.getZ() + dz);
                         if (groundHeight(block) <= 0 || fullFootprint(block)) {
                             break;
