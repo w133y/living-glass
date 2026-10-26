@@ -15,6 +15,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BaseFireBlock;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -53,8 +54,23 @@ final class DecalRenderer {
     private static final Direction[] PAIRS = {Direction.EAST, Direction.SOUTH};
     private static final FloatArrayList[] scorchLists = lists(LIGHTNING_VARIANTS);
     private static final FloatArrayList[] emberLists = lists(LIGHTNING_VARIANTS);
-    /** The burn mark on sand, fused into glass; its specular map makes it shine like metal under shader packs. */
+    /**
+     * The burn mark on sand: its heart fused into opaque glass, which shader packs reflect like metal (its LabPBR map,
+     * or obsidian's built-in material in packs without PBR maps), in a see-through rim of sintered sand.
+     */
     private static final FloatArrayList[] glassLists = lists(LIGHTNING_VARIANTS);
+    private static final FloatArrayList[] sinterLists = lists(LIGHTNING_VARIANTS);
+    /** Which lists a burn mark goes into per texture variant: soot on most ground, sinter and glass on sand. */
+    private static final FloatArrayList[][] SOIL = new FloatArrayList[LIGHTNING_VARIANTS][];
+    private static final FloatArrayList[][] SAND = new FloatArrayList[LIGHTNING_VARIANTS][];
+
+    static {
+        for (int i = 0; i < LIGHTNING_VARIANTS; i++) {
+            SOIL[i] = new FloatArrayList[] {scorchLists[i]};
+            SAND[i] = new FloatArrayList[] {sinterLists[i], glassLists[i]};
+        }
+    }
+
     /** Wall faces a burn mark has been drawn on this frame. */
     private static final Set<DecalTracker.Key> WALLS_TAKEN = new HashSet<>();
     /** A splat fades out over the last quarter of its life. */
@@ -86,6 +102,9 @@ final class DecalRenderer {
             list.clear();
         }
         for (FloatArrayList list : glassLists) {
+            list.clear();
+        }
+        for (FloatArrayList list : sinterLists) {
             list.clear();
         }
         DecalTracker decals = DecalTracker.INSTANCE;
@@ -131,7 +150,16 @@ final class DecalRenderer {
         }
         for (int i = 0; i < LIGHTNING_VARIANTS; i++) {
             OverlayRenderer.submitDecal(collector, poseStack, "lightning_scorch_" + i, scorchLists[i]);
-            OverlayRenderer.submitDecal(collector, poseStack, "lightning_glass_" + i, glassLists[i]);
+            OverlayRenderer.submitDecal(collector, poseStack, "lightning_sinter_" + i, sinterLists[i]);
+            String glass = "lightning_glass_" + i;
+            FloatArrayList quads = glassLists[i];
+            if (OverlayRenderer.lit) {
+                // Solid, so the pack draws it before it works out reflections, and tagged as obsidian, the glass of lava
+                ShaderPacks.submitAs(Blocks.OBSIDIAN.defaultBlockState(),
+                        () -> OverlayRenderer.submitSolid(collector, poseStack, glass, quads));
+            } else {
+                OverlayRenderer.submitDecal(collector, poseStack, glass, quads);
+            }
             OverlayRenderer.submitDecal(collector, poseStack, "lightning_embers_" + i, emberLists[i]);
         }
     }
@@ -294,8 +322,10 @@ final class DecalRenderer {
                     float ca = (float) (st.x() - block.getX());
                     float cb = (float) (1 - (st.z() - block.getZ()));
                     double local = surface[i] - top[i];
-                    splatPart(level, (fused(level, block) ? glassLists : scorchLists)[variant], st.gone(), block,
-                            Direction.UP, ca, cb, local, cam, fade, SCORCH_HALF, turn, false, SCORCH_LIFT);
+                    for (FloatArrayList out : (fused(level, block) ? SAND : SOIL)[variant]) {
+                        splatPart(level, out, st.gone(), block, Direction.UP, ca, cb, local, cam, fade, SCORCH_HALF, turn,
+                                false, SCORCH_LIFT);
+                    }
                     if (glow > 0) {
                         splatPart(level, emberLists[variant], st.gone(), block, Direction.UP, ca, cb, local, cam, glow,
                                 SCORCH_HALF, turn, true, EMBER_LIFT);
@@ -363,7 +393,7 @@ final class DecalRenderer {
                 continue;
             }
             int light = OverlayRenderer.packedLight(level, air);
-            FloatArrayList out = (fused(level, block) ? glassLists : scorchLists)[variant];
+            FloatArrayList[] outs = (fused(level, block) ? SAND : SOIL)[variant];
             float bottom = (float) Math.max(rect[2], lowSurface - y), roof = (float) Math.min(rect[3], highSurface - y);
             boolean drawn = false;
             for (int k = 0; k < 16; k++) {
@@ -381,15 +411,19 @@ final class DecalRenderer {
                     down = Math.min(down, split);
                     up = Math.min(up, height - split);
                 }
-                if (topMarked) {
-                    drawn |= streak(out, block, face, plane, a0, a1, Math.max(bottom, (float) (highSurface - y - down / 16.0)),
-                            roof, texel(turn, alongX, offset, rowHigh, false), texel(turn, alongX, offset, rowHigh, true),
-                            cam, color, light);
-                }
-                if (footMarked) {
-                    drawn |= streak(out, block, face, plane, a0, a1, bottom, Math.min(roof, (float) (lowSurface - y + up / 16.0)),
-                            texel(turn, alongX, offset, rowLow, false), texel(turn, alongX, offset, rowLow, true),
-                            cam, color, light);
+                for (FloatArrayList out : outs) {
+                    if (topMarked) {
+                        drawn |= streak(out, block, face, plane, a0, a1,
+                                Math.max(bottom, (float) (highSurface - y - down / 16.0)), roof,
+                                texel(turn, alongX, offset, rowHigh, false), texel(turn, alongX, offset, rowHigh, true),
+                                cam, color, light);
+                    }
+                    if (footMarked) {
+                        drawn |= streak(out, block, face, plane, a0, a1, bottom,
+                                Math.min(roof, (float) (lowSurface - y + up / 16.0)),
+                                texel(turn, alongX, offset, rowLow, false), texel(turn, alongX, offset, rowLow, true),
+                                cam, color, light);
+                    }
                 }
             }
             if (drawn) {

@@ -81,6 +81,14 @@ public final class Compat {
         collector.submitCustomGeometry(poseStack, type, renderer);
     }
 
+    /** Opaque cut-out geometry lit like an entity: under shaders it is drawn with the solid world, which packs reflect. */
+    public static void submitSolid(SubmitNodeCollector collector, PoseStack poseStack, String namespace, String path,
+                                   SubmitNodeCollector.CustomGeometryRenderer renderer) {
+        RenderType type = RENDER_TYPES.computeIfAbsent("solid:" + namespace + ":" + path,
+                k -> RenderType.entityCutoutNoCull(ResourceLocation.fromNamespaceAndPath(namespace, path)));
+        collector.submitCustomGeometry(poseStack, type, renderer);
+    }
+
     public static Vec3 cameraPos(Minecraft minecraft) {
         return minecraft.gameRenderer.getMainCamera().getPosition();
     }

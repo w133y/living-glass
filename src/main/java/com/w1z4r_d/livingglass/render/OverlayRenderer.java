@@ -646,6 +646,15 @@ public final class OverlayRenderer {
                 (pose, consumer) -> emit(quads, pose, consumer));
     }
 
+    /** Like submitDecal, for opaque cut-out quads that shader packs should light and reflect with the solid world. */
+    static void submitSolid(SubmitNodeCollector collector, PoseStack poseStack, String texture, FloatArrayList quads) {
+        if (quads.isEmpty()) {
+            return;
+        }
+        Compat.submitSolid(collector, poseStack, LivingGlassClient.MOD_ID, TEX + texture + ".png",
+                (pose, consumer) -> emit(quads, pose, consumer));
+    }
+
     static void emit(FloatArrayList q, PoseStack.Pose pose, VertexConsumer vc) {
         float[] a = q.elements();
         for (int i = 0; i + STRIDE <= q.size(); i += STRIDE) {
