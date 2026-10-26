@@ -86,6 +86,8 @@ final class DecalRenderer {
     /** A splat fades out over the last quarter of its life. */
     private static final float SPLAT_FADE = 0.25f;
     private static final int CACHE_TICKS = 20;
+    /** How far neighbouring ash must have built up before a patch runs on into it. */
+    private static final float JOIN_AMOUNT = 0.3f;
 
     private DecalRenderer() {
     }
@@ -153,7 +155,7 @@ final class DecalRenderer {
         for (int i = 0; i < ashLists.length; i++) {
             String name = i < SIDE_BASE ? "ash_full_" + i / 16 + "_" + i % 16
                     : "ash_side_" + (i - SIDE_BASE) / 4 + "_" + (i - SIDE_BASE) % 4;
-            OverlayRenderer.submitDecal(collector, poseStack, name, ashLists[i]);
+            OverlayRenderer.submitMultiply(collector, poseStack, name, ashLists[i]); // darkens the block's own texture
         }
         for (int i = 0; i < SNOW_VARIANTS; i++) {
             OverlayRenderer.submitDecal(collector, poseStack, "snow_" + i, snowLists[i]);
@@ -223,9 +225,10 @@ final class DecalRenderer {
         return ashy(all, pos.relative(t), face) || ashy(all, pos.relative(t).relative(face), t.getOpposite());
     }
 
+    /** The ash on that face has built up enough to show, so this patch may run on into it without a faded edge. */
     private static boolean ashy(Map<DecalTracker.Key, Ash> all, BlockPos pos, Direction face) {
         Ash n = all.get(new DecalTracker.Key(pos.asLong(), face));
-        return n != null && (n.target > 0 || n.amount > 0.02f);
+        return n != null && n.amount > JOIN_AMOUNT;
     }
 
     private static void drawAsh(Ash a, BlockPos pos, Vec3 cam) {
@@ -242,7 +245,9 @@ final class DecalRenderer {
             mask = (mask & ~12) | ((mask & 4) << 1) | ((mask & 8) >> 1);
         }
         a.look.show(a.kind == Kind.FULL ? variant * 16 + mask : SIDE_BASE + variant * 4 + (mask & 3));
-        int color = OverlayRenderer.argb(a.amount, 0xFFFFFF, OverlayRenderer.lit ? 1 : a.shade);
+        // White, as it multiplies the block under it, which is shaded already; how far it has built up picks which
+        // of its pixels show (see the ash textures' alpha)
+        int color = OverlayRenderer.argb(a.amount, 0xFFFFFF, 1);
         int light = a.light;
         Melt look = a.look;
         float[] r = a.rect;
