@@ -13,6 +13,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BaseFireBlock;
+import net.minecraft.world.level.block.SnowLayerBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -264,13 +265,12 @@ final class DecalRenderer {
             for (int dz = -reach; dz <= reach; dz++) {
                 int i = (dx + reach) * size + dz + reach;
                 top[i] = Integer.MIN_VALUE;
-                for (int dy = 1; dy >= -2; dy--) {
+                for (int dy = 2; dy >= -3; dy--) {
                     BlockPos block = ground.offset(dx, dy, dz);
-                    BlockPos above = block.above();
-                    if (DecalTracker.INSTANCE.hasFace(block, Direction.UP)
-                            && !level.getBlockState(above).isCollisionShapeFullBlock(level, above)) {
+                    double height = groundHeight(level, block);
+                    if (height > 0) {
                         top[i] = block.getY();
-                        surface[i] = block.getY() + level.getBlockState(block).getShape(level, block).max(Direction.Axis.Y);
+                        surface[i] = block.getY() + height;
                         break;
                     }
                 }
@@ -314,6 +314,25 @@ final class DecalRenderer {
     }
 
     /**
+     * Height (0..1) of the surface on top of block that a burn mark can lie on, or 0 if there is none: the top of its
+     * real shape, so snow layers, slabs and carpets count, but grass and flowers you walk through do not, and neither
+     * does a block buried under a full block.
+     */
+    private static double groundHeight(Level level, BlockPos block) {
+        BlockState state = level.getBlockState(block);
+        if (state.isAir() || state.getBlock() instanceof BaseFireBlock
+                || (state.getCollisionShape(level, block).isEmpty() && !(state.getBlock() instanceof SnowLayerBlock))) {
+            return 0;
+        }
+        BlockPos above = block.above();
+        if (level.getBlockState(above).isCollisionShapeFullBlock(level, above)) {
+            return 0;
+        }
+        VoxelShape shape = state.getShape(level, block);
+        return shape.isEmpty() ? 0 : shape.max(Direction.Axis.Y);
+    }
+
+    /**
      * Scorch on the side faces of a step: the blocks of the taller column from just above the lower column's top
      * up to the tall column's top, on the face toward the lower column. Each pixel row takes the texture row at the
      * step's edge line, drawn down from the top edge and up from the lower ground, fading out over DRAPE.
@@ -324,6 +343,10 @@ final class DecalRenderer {
         boolean acrossPositive = across.getAxisDirection() == Direction.AxisDirection.POSITIVE;
         boolean facePositive = face.getAxisDirection() == Direction.AxisDirection.POSITIVE;
         boolean alongX = across.getAxis() == Direction.Axis.X;
+        // A thin top on the lower side (snow layer, slab, carpet) leaves the step's face showing above it in that block
+        if (lowSurface < fromY - 1.0e-3) {
+            fromY--;
+        }
         double centreAlong = alongX ? st.x() : st.z();
         double centreFixed = alongX ? st.z() : st.x();
         double fixed = (alongX ? tallTop.getZ() : tallTop.getX()) + (facePositive ? 1 : 0);
@@ -356,6 +379,9 @@ final class DecalRenderer {
             for (int row = 0; row < DRAPE_ROWS; row++) {
                 float y0 = row / (float) DRAPE_ROWS, y1 = (row + 1) / (float) DRAPE_ROWS;
                 double middle = y + (y0 + y1) / 2;
+                if (middle < lowSurface) {
+                    continue; // hidden behind the snow layer or slab in front
+                }
                 float down = (float) (1 - (highSurface - middle) / DRAPE);
                 float up = (float) (1 - (middle - lowSurface) / DRAPE);
                 float strength = Math.clamp(Math.max(down, up), 0f, 1f);
