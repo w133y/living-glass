@@ -646,6 +646,15 @@ public final class OverlayRenderer {
                 (pose, consumer) -> emit(quads, pose, consumer));
     }
 
+    /** Like submitDecal, for quads that darken the block's own texture under them (see Compat.submitMultiply). */
+    static void submitMultiply(SubmitNodeCollector collector, PoseStack poseStack, String texture, FloatArrayList quads) {
+        if (quads.isEmpty()) {
+            return;
+        }
+        Compat.submitMultiply(collector, poseStack, LivingGlassClient.MOD_ID, TEX + texture + ".png",
+                (pose, consumer) -> emit(quads, pose, consumer));
+    }
+
     /** Like submitDecal, for opaque cut-out quads that shader packs should light and reflect with the solid world. */
     static void submitSolid(SubmitNodeCollector collector, PoseStack poseStack, String texture, FloatArrayList quads) {
         if (quads.isEmpty()) {

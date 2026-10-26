@@ -153,8 +153,9 @@ final class DecalRenderer {
             OverlayRenderer.submitDecal(collector, poseStack, "snow_" + i, snowLists[i]);
         }
         for (int i = 0; i < LIGHTNING_VARIANTS; i++) {
-            OverlayRenderer.submitDecal(collector, poseStack, "lightning_scorch_" + i, scorchLists[i]);
-            OverlayRenderer.submitDecal(collector, poseStack, "lightning_sinter_" + i, sinterLists[i]);
+            // Soot darkens the blocks' own textures, like the cracks of a block being broken
+            OverlayRenderer.submitMultiply(collector, poseStack, "lightning_scorch_" + i, scorchLists[i]);
+            OverlayRenderer.submitMultiply(collector, poseStack, "lightning_sinter_" + i, sinterLists[i]);
             String glass = "lightning_glass_" + i;
             FloatArrayList quads = glassLists[i];
             if (OverlayRenderer.lit) {
@@ -327,7 +328,8 @@ final class DecalRenderer {
         if (age >= life) {
             return;
         }
-        float fade = 0.9f * (age < life * 2 / 3 ? 1 : (life - age) / (life / 3f));
+        // Soot fades by losing pixels, rim first (see its texture's alpha); glass by turning see-through
+        float fade = age < life * 2 / 3 ? 1 : (life - age) / (life / 3f);
         float glow = age < EMBER_TICKS ? 1 - age / (float) EMBER_TICKS : 0;
         BlockPos ground = BlockPos.of(st.ground());
         int style = OverlayRenderer.hash(st.seed());
@@ -414,7 +416,6 @@ final class DecalRenderer {
         double inward = (facePositive ? -0.5 : 0.5) / 16;
         double rowHigh = fixed + inward - centreFixed, rowLow = fixed - inward - centreFixed;
         int height = (int) Math.round((highSurface - lowSurface) * 16);
-        int color = OverlayRenderer.argb(fade, 0xFFFFFF, OverlayRenderer.lit ? 1 : faceShade(face));
         double plane = facePositive ? 1 : 0;
         int blockAlong = alongX ? x : z;
         for (int y = (int) Math.floor(lowSurface + 1.0e-4); y <= topY; y++) {
@@ -447,6 +448,7 @@ final class DecalRenderer {
                     }
                     float bottom = (float) Math.max(rect[2], lowSurface - y), roof = (float) Math.min(rect[3], highSurface - y);
                     for (FloatArrayList out : outs) {
+                        int color = tint(out, fade, face);
                         drawn |= streak(out, block, face, plane, a0, a1,
                                 Math.max(bottom, (float) (highSurface - y - down / 16.0)), roof,
                                 texel(turn, alongX, offset, rowHigh, false), texel(turn, alongX, offset, rowHigh, true),
@@ -489,7 +491,6 @@ final class DecalRenderer {
         }
         double from = up ? edge : Math.max(edge - 1, lowSurface), to = up ? Math.min(edge + 1, highSurface) : edge;
         int away = up ? -sign : sign; // which way the ground runs on past the edge, folded onto the face
-        int color = OverlayRenderer.argb(fade, 0xFFFFFF, OverlayRenderer.lit ? 1 : faceShade(face));
         double plane = sign > 0 ? 1 : 0;
         for (int y = (int) Math.floor(from + 1.0e-4); y < to - 1.0e-4; y++) {
             BlockPos block = new BlockPos(x, y, z);
@@ -507,6 +508,7 @@ final class DecalRenderer {
                     continue;
                 }
                 for (FloatArrayList out : (fused(level, block) ? SAND : SOIL)[variant]) {
+                    int color = tint(out, fade, face);
                     for (int c = 0; c < 4; c++) {
                         float a = c == 1 || c == 2 ? rect[1] : rect[0], b = c >= 2 ? b1 : b0;
                         double offset = blockAlong + (acrossPositive ? a : 1 - a) - centreAlong;
@@ -562,7 +564,6 @@ final class DecalRenderer {
                 int away = mx * face.getStepX() + mz * face.getStepZ() < 0 ? -1 : 1;
                 double dx = face.getStepX() * away, dz = face.getStepZ() * away;
                 double climb = Math.min(1, Math.hypot(mx, mz) / SCORCH_HALF); // texels further out per pixel up
-                int color = OverlayRenderer.argb(fade, 0xFFFFFF, OverlayRenderer.lit ? 1 : faceShade(face));
                 FloatArrayList[] outs = (fused(level, block) ? SAND : SOIL)[variant];
                 int rows = (int) Math.round((box.maxY - box.minY) * 16);
                 for (int r = 0; r < rows; r++) {
@@ -573,6 +574,7 @@ final class DecalRenderer {
                         break;
                     }
                     for (FloatArrayList list : outs) {
+                        int color = tint(list, fade, face);
                         for (int c = 0; c < 4; c++) {
                             int e = c == 1 || c == 2 ? 1 : 0;
                             double qx = ends[e * 2] + dx * step, qz = ends[e * 2 + 1] + dz * step;
@@ -604,6 +606,18 @@ final class DecalRenderer {
     /** Scorch texture coordinate of the texel at offset along a wall and row across it from the strike point. */
     private static float texel(int turn, boolean alongX, double offset, double row, boolean wantV) {
         return markTex(turn, alongX ? offset : row, alongX ? row : offset, SCORCH_HALF + 1, wantV);
+    }
+
+    /**
+     * Vertex colour of a decal quad: white for soot that multiplies the block under it, which is shaded already;
+     * otherwise shaded like the face it lies on (shader packs shade it themselves).
+     */
+    private static int tint(FloatArrayList out, float alpha, Direction face) {
+        boolean multiplies = false;
+        for (int i = 0; i < LIGHTNING_VARIANTS; i++) {
+            multiplies |= out == scorchLists[i] || out == sinterLists[i];
+        }
+        return OverlayRenderer.argb(alpha, 0xFFFFFF, OverlayRenderer.lit || multiplies ? 1 : faceShade(face));
     }
 
     /** Lightning fuses sand into glass rather than charring it. */
@@ -638,7 +652,7 @@ final class DecalRenderer {
             return;
         }
         // Lit by the lightmap like the block under it; glowing parts (embers) stay bright in the dark
-        int color = OverlayRenderer.argb(alpha, 0xFFFFFF, OverlayRenderer.lit || glow ? 1 : faceShade(face));
+        int color = glow ? OverlayRenderer.argb(alpha, 0xFFFFFF, 1) : tint(out, alpha, face);
         int light = glow ? OverlayRenderer.FULL_BRIGHT : OverlayRenderer.packedLight(level, air);
         for (float[] shape : shapes) {
             for (int c = 0; c < 4; c++) {

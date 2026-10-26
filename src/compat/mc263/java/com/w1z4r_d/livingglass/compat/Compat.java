@@ -80,6 +80,17 @@ public final class Compat {
         collector.submitCustomGeometry(poseStack, type, renderer);
     }
 
+    /**
+     * Geometry that multiplies what is under it, like the cracks of a block being broken: the block's own texture
+     * shows through, darkened or lightened by the texture's colour (mid grey changes nothing).
+     */
+    public static void submitMultiply(SubmitNodeCollector collector, PoseStack poseStack, String namespace, String path,
+                                      SubmitNodeCollector.CustomGeometryRenderer renderer) {
+        RenderType type = RENDER_TYPES.computeIfAbsent("multiply:" + namespace + ":" + path,
+                k -> RenderTypes.crumbling(Identifier.fromNamespaceAndPath(namespace, path)));
+        collector.submitCustomGeometry(poseStack, type, renderer);
+    }
+
     /** Opaque cut-out geometry lit like an entity: under shaders it is drawn with the solid world, which packs reflect. */
     public static void submitSolid(SubmitNodeCollector collector, PoseStack poseStack, String namespace, String path,
                                    SubmitNodeCollector.CustomGeometryRenderer renderer) {

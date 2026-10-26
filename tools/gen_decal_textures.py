@@ -7,7 +7,10 @@ ash_side_{variant}_{mask}: soot on a block next to a fire, from the bottom up to
 left/right bits are used; the top always fades out.
 snow_{variant}: a 10x10 snowball splat (10/16 of a block).
 lightning_scorch_{variant}: a 64x64 burn mark spanning 4x4 blocks where lightning struck, in LIGHTNING_VARIANTS
-styles that differ in size, shape and cracks.
+styles that differ in size, shape and cracks. It darkens the block's own texture like the cracks of a block being
+broken: its colour multiplies what is under it twice over, so mid grey leaves it as it is and darker greys char it.
+Its alpha is when each pixel goes as the mark fades (pixels go once the fade drops under 0.1 / alpha): the rim first,
+the heart last.
 lightning_embers_{variant}: the glowing cinders drawn over it while it is fresh.
 lightning_glass_{variant}: the same mark where lightning struck sand, melted into glass (fulgurite): the heart a
 pale glassy pool with a thin edge, the cracks thin glass veins, with a LabPBR specular map lightning_glass_{variant}_s
@@ -38,7 +41,16 @@ GLASS_LIT, GLASS_CLEAR, GLASS_THICK = (222, 232, 226, 255), (192, 205, 197, 255)
 RIM_LIT, RIM_THICK = (240, 246, 242, 255), (126, 134, 118, 255)
 GLINT = (250, 253, 251, 255)
 VEIN = (196, 206, 198, 255)
-SINTER = (198, 182, 138, 110)
+SINTER = (110, 104, 92)  # multiplies like the scorch: sand a little darker and browner
+# Scorch as a multiplier, from the rim to the heart, and how far into the fade each ring lasts
+CHAR = [(100, 96, 92), (76, 72, 68), (52, 49, 46), (30, 28, 26)]
+CHAR_LASTS = [0.75, 0.55, 0.35, 0.15]
+NEUTRAL = (128, 128, 128, 0)
+
+
+def charred(colour, lasts):
+    """A multiplying pixel that goes once the fade drops under lasts."""
+    return colour + (min(255, round(25.5 / max(0.1, min(0.95, lasts)))),)
 GLASS_SPECULAR = (255, 230, 0, 255)
 VEIN_SPECULAR = (235, 230, 0, 255)
 
@@ -188,12 +200,13 @@ for variant, (heart, rings, noise, stretch, arms_range, length_range, width, for
         for px, py in bits:
             if 0 <= px < L and 0 <= py < L:
                 mark[py][px] = max(mark[py][px], rnd.choice((1, 2)))
-    img = Image.new("RGBA", (L + 2 * M, L + 2 * M), (0, 0, 0, 0))
+    img = Image.new("RGBA", (L + 2 * M, L + 2 * M), NEUTRAL)
+    lasting = smooth(random.Random(71 + variant * 977), L, 6, 0.12)  # so pixels go in clumps, not one by one
     embers = Image.new("RGBA", (L + 2 * M, L + 2 * M), (0, 0, 0, 0))
     for y in range(L):
         for x in range(L):
             if mark[y][x] >= 0:
-                img.putpixel((x + M, y + M), soot_px(mark[y][x]))
+                img.putpixel((x + M, y + M), charred(CHAR[mark[y][x]], CHAR_LASTS[mark[y][x]] + lasting[y][x]))
             # Glowing cinders only in the heart
             r = radius(x, y)
             if r < heart - 1.5 and rnd.random() < 0.3:
@@ -224,7 +237,7 @@ for variant, (heart, rings, noise, stretch, arms_range, length_range, width, for
                 glints.add((x + i, y - i))
     glass = Image.new("RGBA", (L + 2 * M, L + 2 * M), (0, 0, 0, 0))
     specular = Image.new("RGBA", (L + 2 * M, L + 2 * M), (0, 0, 0, 0))
-    sinter = Image.new("RGBA", (L + 2 * M, L + 2 * M), (0, 0, 0, 0))
+    sinter = Image.new("RGBA", (L + 2 * M, L + 2 * M), NEUTRAL)
     for y in range(L):
         for x in range(L):
             at = (x + M, y + M)
@@ -242,7 +255,7 @@ for variant, (heart, rings, noise, stretch, arms_range, length_range, width, for
                 glass.putpixel(at, VEIN)
                 specular.putpixel(at, VEIN_SPECULAR)
             elif near(x, y, pool):
-                sinter.putpixel(at, SINTER)
+                sinter.putpixel(at, charred(SINTER, 0.6))
     glass.save(f"{out}/lightning_glass_{variant}.png")
     specular.save(f"{out}/lightning_glass_{variant}_s.png")
     sinter.save(f"{out}/lightning_sinter_{variant}.png")
