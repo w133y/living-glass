@@ -2,6 +2,7 @@ package com.w1z4r_d.livingglass.render;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.w1z4r_d.livingglass.LivingGlassConfig;
+import com.w1z4r_d.livingglass.compat.Compat;
 import com.w1z4r_d.livingglass.decal.DecalTracker;
 import com.w1z4r_d.livingglass.decal.DecalTracker.Ash;
 import com.w1z4r_d.livingglass.decal.DecalTracker.Kind;
@@ -23,6 +24,7 @@ import net.minecraft.world.phys.shapes.VoxelShape;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -75,6 +77,8 @@ final class DecalRenderer {
         }
     }
 
+    /** Block models' quads by state, for marks on posts and fences (see model). */
+    private static final Map<BlockState, List<float[]>> MODELS = new IdentityHashMap<>();
     /** Wall faces a burn mark has been drawn on this frame. */
     private static final Set<DecalTracker.Key> WALLS_TAKEN = new HashSet<>();
     /** A splat fades out over the last quarter of its life. */
@@ -353,9 +357,15 @@ final class DecalRenderer {
                             continue;
                         }
                         BlockPos block = new BlockPos(ground.getX() + dx, groundY + k, ground.getZ() + dz);
-                        // Posts, fences and stair risers smoke from the ground up
+                        // A post, fence or lantern goes by its model where it has one
+                        List<float[]> model = k == 0 ? List.of() : model(level.getBlockState(block));
+                        if (!model.isEmpty()) {
+                            modelMarks(level, variant, st, turn, block, surface[i], model, ca, cb, glow, cam, fade);
+                            continue;
+                        }
+                        // A stair's riser smokes from the ground up
                         sides(level, variant, st, turn, block, surface[i], cam, fade);
-                        // Every top of its shape: both treads of a stair, a fence post and its rails
+                        // Every top of its shape: both treads of a stair
                         for (double local : tops(level, block)) {
                             for (FloatArrayList out : (fused(level, block) ? SAND : SOIL)[variant]) {
                                 splatPart(level, out, st.gone(), block, Direction.UP, ca, cb, local, cam, fade,
@@ -524,11 +534,8 @@ final class DecalRenderer {
     }
 
     /**
-     * Soot on the side faces inside a block's cell (fence posts and rails, the riser of a stair) of a column the mark
-     * lies on, on the block's own pixel grid: along the face each pixel takes the mark's texel on the ground there,
-     * and each pixel row higher up takes its texels from further out, away from the strike. How much further grows
-     * with the face's distance from the strike, so a post at the strike is charred all the way up and soot on posts
-     * further out thins sooner with height, with no step between them.
+     * Soot on the side faces inside a block's cell of a column the mark lies on: the riser of a stair, from its shape.
+     * Posts, fences and lanterns go by their model instead (see modelMarks), as their outline shape is not what is seen.
      */
     private static void sides(Level level, int variant, DecalTracker.Strike st, int turn, BlockPos block, double ground,
                               Vec3 cam, float fade) {
@@ -536,57 +543,119 @@ final class DecalRenderer {
             return;
         }
         int light = OverlayRenderer.packedLight(level, block);
-        double edge = SCORCH_HALF + 0.95; // past the mark, short of where its texture would wrap round
         for (AABB box : level.getBlockState(block).getShape(level, block).toAabbs()) {
             for (Direction face : Direction.Plane.HORIZONTAL) {
                 boolean positive = face.getAxisDirection() == Direction.AxisDirection.POSITIVE;
                 double plane = positive ? box.max(face.getAxis()) : box.min(face.getAxis());
-                if (plane < 1.0e-3 || plane > 1 - 1.0e-3) {
-                    continue; // on the cell's edge: a wall between columns, or against the next block
-                }
-                Direction across = across(face);
-                float a0 = low(box, across), a1 = high(box, across);
-                // The face's two ends on the ground, from the strike point
-                double[] ends = new double[4];
-                for (int e = 0; e < 2; e++) {
-                    double[] local = new double[3];
-                    local[face.getAxis().ordinal()] = plane;
-                    place(local, across, e == 0 ? a0 : a1);
-                    ends[e * 2] = block.getX() + local[0] - st.x();
-                    ends[e * 2 + 1] = block.getZ() + local[2] - st.z();
-                }
-                double far = Math.max(Math.hypot(ends[0], ends[1]), Math.hypot(ends[2], ends[3]));
-                if (far >= edge) {
-                    continue;
-                }
-                // Out of the face when it looks away from the strike, into it when it looks toward it
-                double mx = (ends[0] + ends[2]) / 2, mz = (ends[1] + ends[3]) / 2;
-                int away = mx * face.getStepX() + mz * face.getStepZ() < 0 ? -1 : 1;
-                double dx = face.getStepX() * away, dz = face.getStepZ() * away;
-                double climb = Math.min(1, Math.hypot(mx, mz) / SCORCH_HALF); // texels further out per pixel up
-                FloatArrayList[] outs = (fused(level, block) ? SAND : SOIL)[variant];
-                int rows = (int) Math.round((box.maxY - box.minY) * 16);
-                for (int r = 0; r < rows; r++) {
-                    float b0 = (float) (box.minY + r / 16.0), b1 = b0 + 1 / 16f;
-                    int out = (int) (climb * Math.abs(block.getY() + (b0 + b1) / 2 - ground) * 16);
-                    double step = (out + 0.5) / 16; // the middle of a texel: the face itself lies on a texel edge
-                    if (far + step >= edge) {
-                        break;
-                    }
-                    for (FloatArrayList list : outs) {
-                        int color = tint(list, fade, face);
-                        for (int c = 0; c < 4; c++) {
-                            int e = c == 1 || c == 2 ? 1 : 0;
-                            double qx = ends[e * 2] + dx * step, qz = ends[e * 2 + 1] + dz * step;
-                            vertex(list, block, face, plane, e == 0 ? a0 : a1, c >= 2 ? b1 : b0, cam, SCORCH_LIFT,
-                                    markTex(turn, qx, qz, SCORCH_HALF + 1, false),
-                                    markTex(turn, qx, qz, SCORCH_HALF + 1, true), color);
-                        }
-                        end(list, face, light);
-                    }
+                if (plane > 1.0e-3 && plane < 1 - 1.0e-3) { // on the cell's edge it is a wall between columns
+                    side(level, variant, st, turn, block, ground, face, plane, low(box, across(face)),
+                            high(box, across(face)), box.minY, box.maxY, cam, fade, light);
                 }
             }
         }
+    }
+
+    /**
+     * Soot on one upright face, a0..a1 across and y0..y1 up within the block, on the block's own pixel grid: along the
+     * face each pixel takes the mark's texel on the ground there, and each pixel row higher up takes its texels from
+     * further out, away from the strike. How much further grows with the face's distance from the strike, so a post at
+     * the strike is charred all the way up and soot on posts further out thins sooner with height.
+     */
+    private static void side(Level level, int variant, DecalTracker.Strike st, int turn, BlockPos block, double ground,
+                             Direction face, double plane, float a0, float a1, double y0, double y1, Vec3 cam, float fade,
+                             int light) {
+        double edge = SCORCH_HALF + 0.95; // past the mark, short of where its texture would wrap round
+        Direction across = across(face);
+        // The face's two ends on the ground, from the strike point
+        double[] ends = new double[4];
+        for (int e = 0; e < 2; e++) {
+            double[] local = new double[3];
+            local[face.getAxis().ordinal()] = plane;
+            place(local, across, e == 0 ? a0 : a1);
+            ends[e * 2] = block.getX() + local[0] - st.x();
+            ends[e * 2 + 1] = block.getZ() + local[2] - st.z();
+        }
+        double far = Math.max(Math.hypot(ends[0], ends[1]), Math.hypot(ends[2], ends[3]));
+        if (far >= edge) {
+            return;
+        }
+        // Out of the face when it looks away from the strike, into it when it looks toward it
+        double mx = (ends[0] + ends[2]) / 2, mz = (ends[1] + ends[3]) / 2;
+        int away = mx * face.getStepX() + mz * face.getStepZ() < 0 ? -1 : 1;
+        double dx = face.getStepX() * away, dz = face.getStepZ() * away;
+        double climb = Math.min(1, Math.hypot(mx, mz) / SCORCH_HALF); // texels further out per pixel up
+        FloatArrayList[] outs = (fused(level, block) ? SAND : SOIL)[variant];
+        int rows = (int) Math.round((y1 - y0) * 16);
+        for (int r = 0; r < rows; r++) {
+            float b0 = (float) (y0 + r / 16.0), b1 = r == rows - 1 ? (float) y1 : b0 + 1 / 16f;
+            int out = (int) (climb * Math.abs(block.getY() + (b0 + b1) / 2 - ground) * 16);
+            double step = (out + 0.5) / 16; // the middle of a texel: the face itself lies on a texel edge
+            if (far + step >= edge) {
+                break;
+            }
+            for (FloatArrayList list : outs) {
+                int color = tint(list, fade, face);
+                for (int c = 0; c < 4; c++) {
+                    int e = c == 1 || c == 2 ? 1 : 0;
+                    double qx = ends[e * 2] + dx * step, qz = ends[e * 2 + 1] + dz * step;
+                    vertex(list, block, face, plane, e == 0 ? a0 : a1, c >= 2 ? b1 : b0, cam, SCORCH_LIFT,
+                            markTex(turn, qx, qz, SCORCH_HALF + 1, false),
+                            markTex(turn, qx, qz, SCORCH_HALF + 1, true), color);
+                }
+                end(list, face, light);
+            }
+        }
+    }
+
+    /**
+     * The mark on a post, fence or lantern standing on the ground, laid on the faces of its model as the player sees
+     * them: on what faces up as on the ground, and up its sides like soot (see side). Faces pressed against the next
+     * block, like the ends of a fence post standing on another, stay clean.
+     */
+    private static void modelMarks(Level level, int variant, DecalTracker.Strike st, int turn, BlockPos block,
+                                   double ground, List<float[]> model, float ca, float cb, float glow, Vec3 cam,
+                                   float fade) {
+        if (st.gone().contains(block.asLong())) {
+            return;
+        }
+        int light = OverlayRenderer.packedLight(level, block);
+        for (float[] q : model) {
+            Direction face = Direction.values()[(int) q[0]];
+            AABB box = new AABB(Math.min(Math.min(q[1], q[4]), Math.min(q[7], q[10])),
+                    Math.min(Math.min(q[2], q[5]), Math.min(q[8], q[11])),
+                    Math.min(Math.min(q[3], q[6]), Math.min(q[9], q[12])),
+                    Math.max(Math.max(q[1], q[4]), Math.max(q[7], q[10])),
+                    Math.max(Math.max(q[2], q[5]), Math.max(q[8], q[11])),
+                    Math.max(Math.max(q[3], q[6]), Math.max(q[9], q[12])));
+            Direction.Axis axis = face.getAxis();
+            double plane = face.getAxisDirection() == Direction.AxisDirection.POSITIVE ? box.max(axis) : box.min(axis);
+            if (face == Direction.DOWN || box.max(axis) - box.min(axis) > 1.0e-3
+                    || (atBoundary(face, plane) && pressed(level, block, face, box))) {
+                continue; // underneath, slanted, or pressed against the next block
+            }
+            if (face == Direction.UP) {
+                float[] rect = {low(box, across(face)), high(box, across(face)), low(box, up(face)), high(box, up(face))};
+                for (FloatArrayList out : (fused(level, block) ? SAND : SOIL)[variant]) {
+                    rectQuad(out, block, face, plane, rect, ca, cb, SCORCH_HALF, turn, SCORCH_LIFT, tint(out, fade, face),
+                            light, cam);
+                }
+                if (glow > 0) {
+                    rectQuad(emberLists[variant], block, face, plane, rect, ca, cb, SCORCH_HALF, turn, EMBER_LIFT,
+                            OverlayRenderer.argb(glow, 0xFFFFFF, 1), OverlayRenderer.FULL_BRIGHT, cam);
+                }
+            } else {
+                side(level, variant, st, turn, block, ground, face, plane, low(box, across(face)), high(box, across(face)),
+                        box.minY, box.maxY, cam, fade, light);
+            }
+        }
+    }
+
+    /** The quads of state's block model (see Compat.modelQuads), looked up once per state. */
+    private static List<float[]> model(BlockState state) {
+        if (MODELS.size() > 512) {
+            MODELS.clear();
+        }
+        return MODELS.computeIfAbsent(state, Compat::modelQuads);
     }
 
     /** One pixel column of a wall from height b0 to b1 in the colour of one texel (u, v) of the scorch texture. */
@@ -655,13 +724,19 @@ final class DecalRenderer {
         int color = glow ? OverlayRenderer.argb(alpha, 0xFFFFFF, 1) : tint(out, alpha, face);
         int light = glow ? OverlayRenderer.FULL_BRIGHT : OverlayRenderer.packedLight(level, air);
         for (float[] shape : shapes) {
-            for (int c = 0; c < 4; c++) {
-                float a = c == 1 || c == 2 ? shape[1] : shape[0], b = c >= 2 ? shape[3] : shape[2];
-                vertex(out, block, face, surface, a, b, cam, lift, markTex(turn, a - ca, cb - b, half + 1, false),
-                        markTex(turn, a - ca, cb - b, half + 1, true), color);
-            }
-            end(out, face, light);
+            rectQuad(out, block, face, surface, shape, ca, cb, half, turn, lift, color, light, cam);
         }
+    }
+
+    /** One rectangle {a0, a1, b0, b1} of a face with the texture of a mark centred at (ca, cb) laid over it. */
+    private static void rectQuad(FloatArrayList out, BlockPos block, Direction face, double plane, float[] rect, float ca,
+                                 float cb, float half, int turn, double lift, int color, int light, Vec3 cam) {
+        for (int c = 0; c < 4; c++) {
+            float a = c == 1 || c == 2 ? rect[1] : rect[0], b = c >= 2 ? rect[3] : rect[2];
+            vertex(out, block, face, plane, a, b, cam, lift, markTex(turn, a - ca, cb - b, half + 1, false),
+                    markTex(turn, a - ca, cb - b, half + 1, true), color);
+        }
+        end(out, face, light);
     }
 
     /**

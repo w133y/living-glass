@@ -7,18 +7,26 @@ import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.renderer.SubmitNodeCollector;
+import net.minecraft.client.renderer.block.dispatch.BlockStateModelPart;
 import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
+import net.minecraft.client.resources.model.geometry.BakedQuad;
+import net.minecraft.core.Direction;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.tags.TagKey;
-import net.minecraft.world.level.block.Block;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
+import org.joml.Vector3fc;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.BiConsumer;
 
@@ -97,6 +105,36 @@ public final class Compat {
         RenderType type = RENDER_TYPES.computeIfAbsent("solid:" + namespace + ":" + path,
                 k -> RenderTypes.entityCutout(Identifier.fromNamespaceAndPath(namespace, path)));
         collector.submitCustomGeometry(poseStack, type, renderer);
+    }
+
+    private static final Direction[] FACES = {null, Direction.DOWN, Direction.UP, Direction.NORTH, Direction.SOUTH,
+            Direction.WEST, Direction.EAST};
+
+    /**
+     * The faces of state's block model, each as {direction ordinal, then x, y, z of its four corners} in block-local
+     * coordinates: the shape the player sees, which for fences and walls is not the block's outline shape.
+     */
+    public static List<float[]> modelQuads(BlockState state) {
+        List<float[]> quads = new ArrayList<>();
+        List<BlockStateModelPart> parts = new ArrayList<>();
+        Minecraft.getInstance().getModelManager().getBlockStateModelSet().get(state)
+                .collectParts(RandomSource.create(42L), parts);
+        for (BlockStateModelPart part : parts) {
+            for (Direction cull : FACES) {
+                for (BakedQuad quad : part.getQuads(cull)) {
+                    float[] q = new float[13];
+                    q[0] = quad.direction().ordinal();
+                    for (int i = 0; i < 4; i++) {
+                        Vector3fc p = quad.position(i);
+                        q[1 + i * 3] = p.x();
+                        q[2 + i * 3] = p.y();
+                        q[3 + i * 3] = p.z();
+                    }
+                    quads.add(q);
+                }
+            }
+        }
+        return quads;
     }
 
     public static Vec3 cameraPos(Minecraft minecraft) {
