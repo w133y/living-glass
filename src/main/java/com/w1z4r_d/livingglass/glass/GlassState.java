@@ -44,9 +44,8 @@ public final class GlassState {
     // Last climate inputs, shown in the debug HUD; NaN until the first climate update
     public float outsideTemp = Float.NaN, warmth;
 
-    /** Texture of the inside face and of the outside ice, each melting into a new frame shape on its own. */
+    /** Texture of the inside face, melting into a new frame shape when a neighbouring window changes. */
     public final Melt look = new Melt();
-    public final Melt iceLook = new Melt();
 
     /** Any breath or wipe patch still visible; refreshed every tick. */
     public boolean patches;

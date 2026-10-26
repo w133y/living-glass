@@ -70,6 +70,17 @@ public final class Compat {
         return entity.getType() == EntityType.LIGHTNING_BOLT;
     }
 
+    /**
+     * Submits quads textured with assets/namespace/path drawn right on a block surface, like the vanilla block
+     * cracks: depth-biased instead of lifted off the surface, lit by the lightmap, cut out where alpha is low.
+     */
+    public static void submitDecal(SubmitNodeCollector collector, PoseStack poseStack, String namespace, String path,
+                                   SubmitNodeCollector.CustomGeometryRenderer renderer) {
+        RenderType type = RENDER_TYPES.computeIfAbsent("decal:" + namespace + ":" + path,
+                k -> RenderType.textPolygonOffset(ResourceLocation.fromNamespaceAndPath(namespace, path)));
+        collector.submitCustomGeometry(poseStack, type, renderer);
+    }
+
     public static Vec3 cameraPos(Minecraft minecraft) {
         return minecraft.gameRenderer.getMainCamera().getPosition();
     }

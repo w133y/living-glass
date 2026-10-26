@@ -439,7 +439,6 @@ public final class GlassTracker {
             }
             gs.patches = gs.hasPatches();
             gs.look.tick(t.meltSeconds);
-            gs.iceLook.tick(t.meltSeconds);
             // Outside ice forms faster on glass that fogs from inside, sliding smoothly between the two paces by how
             // much the room fogs the glass (the target, so all blocks of a window freeze together)
             double fogged = Math.min(1, gs.fogTarget / ICE_FULLY_FOGGED);

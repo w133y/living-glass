@@ -28,11 +28,12 @@ final class DecalRenderer {
     private static final FloatArrayList[] ashLists = lists(SIDE_BASE + VARIANTS * 4);
     private static final FloatArrayList[] snowLists = lists(VARIANTS);
     /**
-     * Decals sit just off the block surface, each kind at its own height so that two kinds on one face (snow on
-     * ash, embers on a burn mark) never share a depth and flicker, especially with shader packs.
+     * Decals lie right on the block surface (the depth bias of their render type keeps them in front of it), so
+     * there is no gap at block edges. Kinds that can overlap on one face sit a hair apart so they never share a
+     * depth and flicker.
      */
-    private static final double LIFT = 0.005;
-    private static final double SCORCH_LIFT = 2 * LIFT, SNOW_LIFT = 3 * LIFT, EMBER_LIFT = 4 * LIFT;
+    private static final double LIFT = 0;
+    private static final double SCORCH_LIFT = 0.001, SNOW_LIFT = 0.002, EMBER_LIFT = 0.003;
     /** Snow splat texture is 10 pixels wide, at the same pixel size as the block textures. */
     private static final float SPLAT_HALF = 5 / 16f;
     /** The lightning scorch texture is 64 pixels, four blocks across. */
@@ -104,19 +105,19 @@ final class DecalRenderer {
         for (int i = 0; i < ashLists.length; i++) {
             String name = i < SIDE_BASE ? "ash_full_" + i / 16 + "_" + i % 16
                     : "ash_side_" + (i - SIDE_BASE) / 4 + "_" + (i - SIDE_BASE) % 4;
-            OverlayRenderer.submit(collector, poseStack, name, ashLists[i]);
+            OverlayRenderer.submitDecal(collector, poseStack, name, ashLists[i]);
         }
         for (int i = 0; i < VARIANTS; i++) {
-            OverlayRenderer.submit(collector, poseStack, "snow_" + i, snowLists[i]);
-            OverlayRenderer.submit(collector, poseStack, "lightning_scorch_" + i, scorchLists[i]);
-            OverlayRenderer.submit(collector, poseStack, "lightning_embers_" + i, emberLists[i]);
+            OverlayRenderer.submitDecal(collector, poseStack, "snow_" + i, snowLists[i]);
+            OverlayRenderer.submitDecal(collector, poseStack, "lightning_scorch_" + i, scorchLists[i]);
+            OverlayRenderer.submitDecal(collector, poseStack, "lightning_embers_" + i, emberLists[i]);
         }
     }
 
     /** Light and which neighbouring faces carry ash too, so neighbouring patches join without an edge. */
     private static void refresh(Level level, Map<DecalTracker.Key, Ash> all, Ash a, BlockPos pos, long now) {
         a.renderTime = now + Math.floorMod(a.seed, 10);
-        a.shade = OverlayRenderer.shade(level, pos.relative(a.face));
+        a.shade = faceShade(a.face);
         a.light = OverlayRenderer.packedLight(level, pos.relative(a.face));
         Direction t1 = across(a.face), t2 = up(a.face);
         a.mask = (joined(all, pos, a.face, t1.getOpposite()) ? 0 : 1) | (joined(all, pos, a.face, t1) ? 0 : 2);
@@ -159,9 +160,8 @@ final class DecalRenderer {
             mask = (mask & ~12) | ((mask & 4) << 1) | ((mask & 8) >> 1);
         }
         a.look.show(a.kind == Kind.FULL ? variant * 16 + mask : SIDE_BASE + variant * 4 + (mask & 3));
-        boolean lit = OverlayRenderer.lit;
-        int color = OverlayRenderer.argb(a.amount, 0xFFFFFF, lit ? 1 : a.shade);
-        int light = lit ? a.light : OverlayRenderer.FULL_BRIGHT;
+        int color = OverlayRenderer.argb(a.amount, 0xFFFFFF, OverlayRenderer.lit ? 1 : a.shade);
+        int light = a.light;
         Melt look = a.look;
         float[] r = a.rect;
         if (r == null) {
@@ -344,15 +344,14 @@ final class DecalRenderer {
         float alongA0 = acrossPositive ? tex0 : tex1, alongA1 = acrossPositive ? tex1 : tex0;
         float uA0 = alongX ? alongA0 : uFixed, vA0 = alongX ? uFixed : alongA0;
         float uA1 = alongX ? alongA1 : uFixed, vA1 = alongX ? uFixed : alongA1;
-        boolean lit = OverlayRenderer.lit;
+        float shade = OverlayRenderer.lit ? 1 : faceShade(face);
         for (int y = fromY; y <= tallTop.getY(); y++) {
             BlockPos block = new BlockPos(tallTop.getX(), y, tallTop.getZ());
             BlockPos air = block.relative(face);
             if (!DecalTracker.INSTANCE.hasFace(block, face) || level.getBlockState(air).isCollisionShapeFullBlock(level, air)) {
                 continue;
             }
-            float shade = lit ? 1 : OverlayRenderer.shade(level, air);
-            int light = lit ? OverlayRenderer.packedLight(level, air) : OverlayRenderer.FULL_BRIGHT;
+            int light = OverlayRenderer.packedLight(level, air);
             double plane = (facePositive ? 1 : 0) + (facePositive ? SCORCH_LIFT : -SCORCH_LIFT);
             for (int row = 0; row < DRAPE_ROWS; row++) {
                 float y0 = row / (float) DRAPE_ROWS, y1 = (row + 1) / (float) DRAPE_ROWS;
@@ -396,10 +395,9 @@ final class DecalRenderer {
         if (atBoundary(face, surface) && level.getBlockState(air).isCollisionShapeFullBlock(level, air)) {
             return;
         }
-        boolean lit = OverlayRenderer.lit;
-        // Glowing parts (embers) stay bright in the dark and under shaders
-        int color = OverlayRenderer.argb(alpha, 0xFFFFFF, lit || glow ? 1 : OverlayRenderer.shade(level, air));
-        int light = lit && !glow ? OverlayRenderer.packedLight(level, air) : OverlayRenderer.FULL_BRIGHT;
+        // Lit by the lightmap like the block under it; glowing parts (embers) stay bright in the dark
+        int color = OverlayRenderer.argb(alpha, 0xFFFFFF, OverlayRenderer.lit || glow ? 1 : faceShade(face));
+        int light = glow ? OverlayRenderer.FULL_BRIGHT : OverlayRenderer.packedLight(level, air);
         // Texture coordinates follow the cut rectangle, so the splat is cut off at the edge, not squashed
         float size = 2 * half;
         float u0 = (a0 - (ca - half)) / size, u1 = (a1 - (ca - half)) / size;
@@ -499,6 +497,16 @@ final class DecalRenderer {
     private static float coord(Direction t, double[] local) {
         double c = local[t.getAxis().ordinal()];
         return (float) (t.getAxisDirection() == Direction.AxisDirection.POSITIVE ? c : 1 - c);
+    }
+
+    /** Vanilla's fixed shading per block face, so a decal is as bright as the face it lies on (shader packs do their own). */
+    private static float faceShade(Direction face) {
+        return switch (face) {
+            case UP -> 1f;
+            case DOWN -> 0.5f;
+            case NORTH, SOUTH -> 0.8f;
+            case EAST, WEST -> 0.6f;
+        };
     }
 
     /** Face "right" axis: as on glass for walls; east on floors and ceilings. */

@@ -70,8 +70,16 @@ public final class OverlayRenderer {
     /** Frost grows in pixel stages from the frame inward; stage textures are supersets of the previous one. */
     private static final int FROST_STAGES = 4;
     private static final FloatArrayList[] frost = lists(VARIANTS * MASKS * FROST_STAGES);
-    /** Ice on the outside face, grown in stages like the frost but mostly from the bottom of the window. */
-    private static final FloatArrayList[] ice = lists(VARIANTS * MASKS * FROST_STAGES);
+    /** Outside frost: one seamless sheet over ICE_SHEET x ICE_SHEET blocks, in ICE_STAGES growth stages. */
+    private static final int ICE_SHEET = 4;
+    private static final int ICE_STAGES = 4;
+    private static final FloatArrayList[] iceSheet = lists(ICE_STAGES);
+    /** How far past the top of the window the front has to climb before the frost covers it all, in blocks. */
+    private static final float ICE_OVERSHOOT = 0.4f;
+    /** How many pixels up or down a column of the ragged front may sit. */
+    private static final float ICE_RAGGED = 1.5f;
+    /** Reused for the dissolve between two growth stages; render runs on one thread. */
+    private static final Melt ICE_STEP = new Melt();
     /** How strongly an effect on one side of the glass shows through to a viewer on the other side. */
     private static final float OTHER_SIDE_ALPHA = 0.3f;
     private static final FloatArrayList drops = new FloatArrayList();
@@ -115,7 +123,7 @@ public final class OverlayRenderer {
         for (FloatArrayList list : frost) {
             list.clear();
         }
-        for (FloatArrayList list : ice) {
+        for (FloatArrayList list : iceSheet) {
             list.clear();
         }
         drops.clear();
@@ -184,7 +192,7 @@ public final class OverlayRenderer {
                     roomSides(gs, p, cam, cfg, shade, light, below, above);
                 }
                 if (cfg.ice.enabled && gs.ice > 0.004f) {
-                    outsideIce(gs, p, cam, below, above, left, right);
+                    outsideIce(gs, p, cam, below, above);
                 }
                 if (cfg.debug) {
                     face(debug, p, gs.inner, gs, 0, 1, cam, 0, 0, 1, 1, 1, 0x00FF00, 1, FULL_BRIGHT, (x, y) -> 0.375f);
@@ -218,11 +226,13 @@ public final class OverlayRenderer {
                 submit(collector, poseStack, "condensation_" + variant + "_" + mask, fog[tex]);
                 for (int stage = 0; stage < FROST_STAGES; stage++) {
                     submit(collector, poseStack, "frost_" + variant + "_" + mask + "_" + stage, frost[tex * FROST_STAGES + stage]);
-                    submit(collector, poseStack, "ice_" + variant + "_" + mask + "_" + stage, ice[tex * FROST_STAGES + stage]);
                 }
             }
         }
         DecalRenderer.render(poseStack, collector, level, cam, cfg);
+        for (int stage = 0; stage < ICE_STAGES; stage++) {
+            submit(collector, poseStack, "ice_sheet_" + stage, iceSheet[stage]);
+        }
         submit(collector, poseStack, "white", drops);
         submit(collector, poseStack, "white", debug);
 
@@ -290,21 +300,35 @@ public final class OverlayRenderer {
     }
 
     /**
-     * Ice on the outside face of a window. It mirrors the inside face, so the window's left and right swap; it melts
-     * into a new frame texture on its own like the inside face does.
+     * Frost on the outside face of a window, cut from one seamless sheet by world position so the feathers run across
+     * block edges. It rises from the bottom of the whole window with a ragged front, one texture pixel per cell, and
+     * covers the window when fully grown. Between growth stages each cell switches to the denser sheet on its own.
      */
-    private static void outsideIce(GlassState gs, BlockPos p, Vec3 cam, int below, int above, int left, int right) {
+    private static void outsideIce(GlassState gs, BlockPos p, Vec3 cam, int below, int above) {
         Direction out = gs.inner.getOpposite();
-        int style = faceStyle(gs, out);
-        // Only mirrored across: the ice grows from the bottom, so it must never be turned upside down
-        boolean flipU = (style & 4) != 0;
-        float u0 = flipU ? 1 : 0, u1 = flipU ? 0 : 1, v0 = 0, v1 = 1;
-        // Seen from outside, the room's right is on the left
-        int outLeft = right, outRight = left;
-        gs.iceLook.show((style & 3) * MASKS + frameMask(flipU ? outRight : outLeft, flipU ? outLeft : outRight, below, above));
+        Direction across = out.getClockWise();
+        boolean acrossPositive = across.getAxisDirection() == Direction.AxisDirection.POSITIVE;
+        // This block's square of the sheet: u follows the world along the face, v follows the world downward
+        int along = across.getAxis() == Direction.Axis.X ? p.getX() : p.getZ();
+        float uBase = Math.floorMod(along, ICE_SHEET) / (float) ICE_SHEET;
+        float vTop = (ICE_SHEET - 1 - Math.floorMod(p.getY(), ICE_SHEET)) / (float) ICE_SHEET;
+        float tile = 1f / ICE_SHEET;
+        float u0 = acrossPositive ? uBase : uBase + tile, u1 = acrossPositive ? uBase + tile : uBase;
+        float front = gs.ice * (below + 1 + above + ICE_OVERSHOOT);
         float seen = seenFrom(cam, p, out, gs);
-        stages(ice, gs.iceLook, gs.ice, p, out, gs, cam, u0, v0, u1, v1, gs.iceLook.melting() ? GRID : 1,
-                lit ? 1 : gs.shadeOuter, lit ? gs.lightOuter : FULL_BRIGHT, (x, y) -> seen);
+        AlphaField alpha = (x, y) -> {
+            // Ragged front: each pixel column of the window reaches a little higher or lower
+            int column = Math.floorMod(along * 16 + (int) ((acrossPositive ? x : 1 - x) * 16), 1 << 20);
+            float ragged = ((hash(column * 0x9E3779B9) & 7) - 3.5f) / 16 * ICE_RAGGED;
+            return below + y < front + ragged ? seen : 0;
+        };
+        float grown = Math.min(gs.ice * ICE_STAGES, ICE_STAGES - 0.001f);
+        int stage = (int) grown;
+        ICE_STEP.prevTex = stage;
+        ICE_STEP.tex = Math.min(ICE_STAGES - 1, stage + 1);
+        ICE_STEP.blend = grown - stage;
+        faceMelt(iceSheet[ICE_STEP.tex], ICE_STEP.tex == stage ? null : iceSheet[stage], ICE_STEP, p, out, gs, 0, 1, cam,
+                u0, vTop, u1, vTop + tile, GRID, 0xFFFFFF, lit ? 1 : gs.shadeOuter, lit ? gs.lightOuter : FULL_BRIGHT, alpha);
     }
 
     /** Draws the last fully grown stage plus the next one fading in, melting between textures with look. */
@@ -610,6 +634,15 @@ public final class OverlayRenderer {
             return;
         }
         Compat.submitTranslucent(collector, poseStack, LivingGlassClient.MOD_ID, TEX + texture + ".png", lit,
+                (pose, consumer) -> emit(quads, pose, consumer));
+    }
+
+    /** Like submit, for decals drawn on block surfaces (see Compat.submitDecal). */
+    static void submitDecal(SubmitNodeCollector collector, PoseStack poseStack, String texture, FloatArrayList quads) {
+        if (quads.isEmpty()) {
+            return;
+        }
+        Compat.submitDecal(collector, poseStack, LivingGlassClient.MOD_ID, TEX + texture + ".png",
                 (pose, consumer) -> emit(quads, pose, consumer));
     }
 
