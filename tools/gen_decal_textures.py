@@ -5,7 +5,8 @@ ash_full_{variant}_{mask}: scorch under or behind a fire, covering nearly the wh
 2 right, 4 bottom, 8 top) mark edges that fade out; an edge without its bit continues into the next block's ash.
 ash_side_{variant}_{mask}: soot on a block next to a fire, from the bottom up to about half the face. Only the
 left/right bits are used; the top always fades out.
-snow_{variant}: a 10x10 snowball splat (10/16 of a block).
+snow_{variant}: a snowball splat in a 14x14 square (14/16 of a block), in SNOW_VARIANTS shapes: a round lump lit
+from the top left with a few bits of snow thrown off round it.
 lightning_scorch_{variant}: a 64x64 burn mark spanning 4x4 blocks where lightning struck, in LIGHTNING_VARIANTS
 styles that differ in size, shape and cracks. It darkens the block's own texture like the cracks of a block being
 broken: its colour multiplies what is under it twice over, so mid grey leaves it as it is and darker greys char it.
@@ -118,21 +119,34 @@ for variant in range(VARIANTS):
                 img.putpixel((x, y), soot_px(round(level + tone[y][x] * 0.4)))
         img.save(f"{out}/ash_side_{variant}_{mask}.png")
 
-    # Snowball splat, 10x10: a chunky lump, lit from the top left, with a few bits thrown off
-    N, M = 10, 16
-    lump = smooth(rnd, N, 2, 1.2)
+
+# Snowball splats: a round lump, lit from the top left with a shadowed rim at the bottom right, and a few bits
+SNOW_VARIANTS = 6
+N, M = 14, 16
+for variant in range(SNOW_VARIANTS):
+    rnd = random.Random(911 + variant * 613)
+    c = (N - 1) / 2
+    radius = (3.4, 3.8, 4.2, 4.6, 3.6, 4.0)[variant]
+    wobble = smooth(rnd, N, 3, 0.35)  # just enough that the edge is not a perfect circle
     img = Image.new("RGBA", (N + 2 * M, N + 2 * M), (0, 0, 0, 0))
     for y in range(N):
         for x in range(N):
-            r = math.hypot(x - 4.5, y - 4.5) + lump[y][x]
-            if r < 3.6:
-                shade = 0 if x + y < 7 else 1 if x + y < 11 else 2
-                if r > 2.8 and x + y > 9:
-                    shade = 3  # shadowed rim at the bottom right
-                img.putpixel((x + M, y + M), SNOW[shade])
-    for x, y in ((rnd.randrange(N), 0), (0, rnd.randrange(N)), (N - 1, rnd.randrange(2, N)), (rnd.randrange(2, N), N - 1)):
-        if math.hypot(x - 4.5, y - 4.5) > 4:
-            img.putpixel((x + M, y + M), SNOW[1])
+            dx, dy = x - c, y - c
+            r = math.hypot(dx, dy) + wobble[y][x]
+            if r >= radius:
+                continue
+            lit = -(dx + dy) / (2 * radius)  # about 0.7 at the top left, -0.7 at the bottom right
+            if r > radius - 1.1 and dx + dy > 1:
+                shade = 3  # shadowed rim
+            else:
+                shade = 0 if lit > 0.2 else 1 if lit > -0.25 else 2
+            img.putpixel((x + M, y + M), SNOW[shade])
+    for _ in range(rnd.randint(2, 5)):  # bits thrown off, one or two pixels each
+        a, d = rnd.uniform(0, 2 * math.pi), rnd.uniform(radius + 1.3, c)
+        x, y = round(c + math.cos(a) * d), round(c + math.sin(a) * d)
+        for px, py in [(x, y)] + ([(x + rnd.choice((-1, 1)), y)] if rnd.random() < 0.4 else []):
+            if 0 <= px < N and 0 <= py < N:
+                img.putpixel((px + M, py + M), SNOW[1 if px + py < N else 2])
     img.save(f"{out}/snow_{variant}.png")
 
 # Lightning scorch, 64x64 over 4x4 blocks: a charred heart fading out in steps, forked cracks, burnt specks

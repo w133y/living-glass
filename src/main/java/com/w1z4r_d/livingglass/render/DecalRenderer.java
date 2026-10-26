@@ -35,7 +35,8 @@ final class DecalRenderer {
     /** Full scorch textures: variant x 16 edge masks; side ash: variant x 4 left/right masks, after them. */
     private static final int SIDE_BASE = VARIANTS * 16;
     private static final FloatArrayList[] ashLists = lists(SIDE_BASE + VARIANTS * 4);
-    private static final FloatArrayList[] snowLists = lists(VARIANTS);
+    private static final int SNOW_VARIANTS = 6;
+    private static final FloatArrayList[] snowLists = lists(SNOW_VARIANTS);
     /**
      * Decals lie right on the block surface (the depth bias of their render type keeps them in front of it). Kinds
      * that can overlap on one face are pulled toward the eye by different hairs, so they never share a depth and
@@ -46,10 +47,10 @@ final class DecalRenderer {
     /** About the angle one screen pixel covers, in radians, for the lift of solid decals seen at a slant (see slant). */
     private static final double PIXEL_ANGLE = 0.0025;
     /**
-     * A snow splat is 10 pixels wide, at the same pixel size as the block textures, and a lightning scorch 64 pixels,
-     * four blocks across. Their textures carry a clear margin a block wide round the mark (see splatPart).
+     * A snow splat is up to 14 pixels wide, at the same pixel size as the block textures, and a lightning scorch 64
+     * pixels, four blocks across. Their textures carry a clear margin a block wide round the mark (see splatPart).
      */
-    private static final float SPLAT_HALF = 5 / 16f;
+    private static final float SPLAT_HALF = 7 / 16f;
     private static final float SCORCH_HALF = 2;
     private static final int LIGHTNING_VARIANTS = 6;
     /** Embers glow for this long after the strike, then only the burn mark is left. */
@@ -154,7 +155,7 @@ final class DecalRenderer {
                     : "ash_side_" + (i - SIDE_BASE) / 4 + "_" + (i - SIDE_BASE) % 4;
             OverlayRenderer.submitDecal(collector, poseStack, name, ashLists[i]);
         }
-        for (int i = 0; i < VARIANTS; i++) {
+        for (int i = 0; i < SNOW_VARIANTS; i++) {
             OverlayRenderer.submitDecal(collector, poseStack, "snow_" + i, snowLists[i]);
         }
         for (int i = 0; i < LIGHTNING_VARIANTS; i++) {
@@ -285,7 +286,7 @@ final class DecalRenderer {
         boolean positive = face.getAxisDirection() == Direction.AxisDirection.POSITIVE;
         double surface = local[normal];
         float a = coord(t1, local), b = coord(t2, local);
-        FloatArrayList out = snowLists[Math.floorMod(s.seed(), VARIANTS)];
+        FloatArrayList out = snowLists[Math.floorMod(OverlayRenderer.hash(s.seed()), SNOW_VARIANTS)];
         for (int da = -1; da <= 1; da++) {
             for (int db = -1; db <= 1; db++) {
                 splatPart(level, out, s.gone(), pos.relative(t1, da).relative(t2, db), face, a - da, b - db, surface, cam,
