@@ -15,7 +15,6 @@ import net.minecraft.core.Direction;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BaseFireBlock;
-import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -40,6 +39,8 @@ final class DecalRenderer {
      * meet at an outside edge close up with no gap.
      */
     private static final double ASH_LIFT = 0, SCORCH_LIFT = 0.001, SNOW_LIFT = 0.002, EMBER_LIFT = 0.003;
+    /** About the angle one screen pixel covers, in radians, for the slant term of the lift (see vertex). */
+    private static final double PIXEL_ANGLE = 0.0025;
     /**
      * A snow splat is 10 pixels wide, at the same pixel size as the block textures, and a lightning scorch 64 pixels,
      * four blocks across. Their textures carry a clear margin a block wide round the mark (see splatPart).
@@ -55,8 +56,8 @@ final class DecalRenderer {
     private static final FloatArrayList[] scorchLists = lists(LIGHTNING_VARIANTS);
     private static final FloatArrayList[] emberLists = lists(LIGHTNING_VARIANTS);
     /**
-     * The burn mark on sand: its heart fused into opaque glass, which shader packs reflect like metal (its LabPBR map,
-     * or obsidian's built-in material in packs without PBR maps), in a see-through rim of sintered sand.
+     * The burn mark on sand: its heart fused into pale opaque glass, which shader packs reflect like metal (its LabPBR
+     * map, or iron's built-in material in packs without PBR maps), in a thin see-through rim of sintered sand.
      */
     private static final FloatArrayList[] glassLists = lists(LIGHTNING_VARIANTS);
     private static final FloatArrayList[] sinterLists = lists(LIGHTNING_VARIANTS);
@@ -154,9 +155,9 @@ final class DecalRenderer {
             String glass = "lightning_glass_" + i;
             FloatArrayList quads = glassLists[i];
             if (OverlayRenderer.lit) {
-                // Solid, so the pack draws it before it works out reflections, and tagged as obsidian, the glass of lava
-                ShaderPacks.submitAs(Blocks.OBSIDIAN.defaultBlockState(),
-                        () -> OverlayRenderer.submitSolid(collector, poseStack, glass, quads));
+                // Solid, so the pack draws it before it works out reflections, and tagged as iron for packs that
+                // give built-in materials to what they know: pale glass then shines like polished metal
+                ShaderPacks.submitAs("iron_ingot", () -> OverlayRenderer.submitSolid(collector, poseStack, glass, quads));
             } else {
                 OverlayRenderer.submitDecal(collector, poseStack, glass, quads);
             }
@@ -343,22 +344,25 @@ final class DecalRenderer {
                         continue;
                     }
                     boolean here = surface[i] > surface[j];
-                    int high = here ? i : j;
-                    drape(level, variant, st, turn, ground.getX() + (here ? dx : nx), top[high],
-                            ground.getZ() + (here ? dz : nz), here ? dir : dir.getOpposite(), surface[here ? j : i],
-                            surface[high], cam, fade);
+                    int wx = ground.getX() + (here ? dx : nx), wz = ground.getZ() + (here ? dz : nz);
+                    Direction face = here ? dir : dir.getOpposite();
+                    double low = surface[here ? j : i], high = surface[here ? i : j];
+                    if (Double.isInfinite(low) || Double.isInfinite(high) || high - low > 1 + 1.0e-3) {
+                        fold(level, variant, st, turn, wx, wz, face, low, high, cam, fade);
+                    } else {
+                        drape(level, variant, st, turn, wx, top[here ? i : j], wz, face, low, high, cam, fade);
+                    }
                 }
             }
         }
     }
 
     /**
-     * Scorch on the side face of a step, on the blocks of the higher column (x, z) up to topY: the mark's pixel row
-     * along the top edge runs down the face and its row along the foot runs up it, so the burn carries straight on
-     * over both edges. Nearer the strike the soot reaches further, so its ragged end makes an arch rather than a
-     * line, and a low step near the heart is covered whole. A side whose ground lies beyond the strike's snapshot
-     * (an infinite surface: a cliff above, a drop below) sends no streak. Where two marks reach the same wall only
-     * the newest is drawn on it, as their streaks would differ and flicker.
+     * Scorch on the side face of a step at most a block high, on the blocks of the higher column (x, z) up to topY:
+     * the mark's pixel row along the top edge runs down the face and its row along the foot runs up it, so the burn
+     * carries straight on over both edges. Nearer the strike the soot reaches further, so its ragged end makes an arch
+     * rather than a line, and a step near the heart is covered whole. Where two marks reach the same wall only the
+     * newest is drawn on it, as their streaks would differ and flicker.
      */
     private static void drape(Level level, int variant, DecalTracker.Strike st, int turn, int x, int topY, int z,
                               Direction face, double lowSurface, double highSurface, Vec3 cam, float fade) {
@@ -372,18 +376,14 @@ final class DecalRenderer {
         if (Math.abs(fixed - centreFixed) >= SCORCH_HALF) {
             return;
         }
-        boolean topMarked = !Double.isInfinite(highSurface), footMarked = !Double.isInfinite(lowSurface);
         // Rows of texels just inside the higher ground's edge and just outside it, at texel centres
         double inward = (facePositive ? -0.5 : 0.5) / 16;
         double rowHigh = fixed + inward - centreFixed, rowLow = fixed - inward - centreFixed;
-        int height = topMarked && footMarked ? (int) Math.round((highSurface - lowSurface) * 16) : 0;
+        int height = (int) Math.round((highSurface - lowSurface) * 16);
         int color = OverlayRenderer.argb(fade, 0xFFFFFF, OverlayRenderer.lit ? 1 : faceShade(face));
         double plane = facePositive ? 1 : 0;
         int blockAlong = alongX ? x : z;
-        double longest = (STREAK_PX + 2) / 16.0;
-        int from = (int) Math.floor((footMarked ? lowSurface : highSurface - longest) + 1.0e-4);
-        int to = topMarked ? topY : (int) Math.floor(lowSurface + longest);
-        for (int y = from; y <= to; y++) {
+        for (int y = (int) Math.floor(lowSurface + 1.0e-4); y <= topY; y++) {
             BlockPos block = new BlockPos(x, y, z);
             BlockPos air = block.relative(face);
             DecalTracker.Key wall = new DecalTracker.Key(block.asLong(), face);
@@ -405,30 +405,77 @@ final class DecalRenderer {
                 int bits = OverlayRenderer.hash(st.seed() ^ (int) Math.floor((offset + centreAlong) * 16) * 0x9E3779B9
                         ^ (int) Math.round(fixed * 16) * 0x632BE5AB);
                 int reach = (int) Math.round(STREAK_PX * (1 - Math.hypot(offset, fixed - centreFixed) / SCORCH_HALF));
-                int down = reach + ragged(bits >>> 8), up = reach + ragged(bits >>> 16);
-                if (height > 0) {
-                    int split = height < 2 ? height : Math.clamp(height / 2 + ragged(bits), 1, height - 1);
-                    down = Math.min(down, split);
-                    up = Math.min(up, height - split);
-                }
+                int split = height < 2 ? height : Math.clamp(height / 2 + ragged(bits), 1, height - 1);
+                int down = Math.min(split, reach + ragged(bits >>> 8)), up = Math.min(height - split, reach + ragged(bits >>> 16));
                 for (FloatArrayList out : outs) {
-                    if (topMarked) {
-                        drawn |= streak(out, block, face, plane, a0, a1,
-                                Math.max(bottom, (float) (highSurface - y - down / 16.0)), roof,
-                                texel(turn, alongX, offset, rowHigh, false), texel(turn, alongX, offset, rowHigh, true),
-                                cam, color, light);
-                    }
-                    if (footMarked) {
-                        drawn |= streak(out, block, face, plane, a0, a1, bottom,
-                                Math.min(roof, (float) (lowSurface - y + up / 16.0)),
-                                texel(turn, alongX, offset, rowLow, false), texel(turn, alongX, offset, rowLow, true),
-                                cam, color, light);
-                    }
+                    drawn |= streak(out, block, face, plane, a0, a1,
+                            Math.max(bottom, (float) (highSurface - y - down / 16.0)), roof,
+                            texel(turn, alongX, offset, rowHigh, false), texel(turn, alongX, offset, rowHigh, true),
+                            cam, color, light);
+                    drawn |= streak(out, block, face, plane, a0, a1, bottom,
+                            Math.min(roof, (float) (lowSurface - y + up / 16.0)),
+                            texel(turn, alongX, offset, rowLow, false), texel(turn, alongX, offset, rowLow, true),
+                            cam, color, light);
                 }
             }
             if (drawn) {
                 WALLS_TAKEN.add(wall);
             }
+        }
+    }
+
+    /**
+     * Soot on the face of a tall step, or of one whose far side lies beyond the strike's reach (an infinite surface: a
+     * cliff, a drop). The mark on the side the strike is on carries on round the edge onto the face for up to a block,
+     * as if that ground went on past the edge: up a cliff from its foot, down a drop from its rim. So it fades out
+     * with distance from the strike just as the mark does; a face turned away from the strike stays clean.
+     */
+    private static void fold(Level level, int variant, DecalTracker.Strike st, int turn, int x, int z, Direction face,
+                             double lowSurface, double highSurface, Vec3 cam, float fade) {
+        Direction across = across(face);
+        boolean alongX = across.getAxis() == Direction.Axis.X;
+        boolean acrossPositive = across.getAxisDirection() == Direction.AxisDirection.POSITIVE;
+        int sign = face.getAxisDirection() == Direction.AxisDirection.POSITIVE ? 1 : -1;
+        double centreAlong = alongX ? st.x() : st.z();
+        double centreFixed = alongX ? st.z() : st.x();
+        double fixed = (alongX ? z : x) + (sign > 0 ? 1 : 0);
+        int blockAlong = alongX ? x : z;
+        // Up from the foot when the strike is out in front of the face, down from the rim when it is behind it
+        boolean up = sign * (fixed - centreFixed) <= 0;
+        double edge = up ? lowSurface : highSurface;
+        if (Double.isInfinite(edge) || Math.abs(fixed - centreFixed) >= SCORCH_HALF
+                || blockAlong + 1 <= centreAlong - SCORCH_HALF || blockAlong >= centreAlong + SCORCH_HALF) {
+            return;
+        }
+        double from = up ? edge : Math.max(edge - 1, lowSurface), to = up ? Math.min(edge + 1, highSurface) : edge;
+        int away = up ? -sign : sign; // which way the ground runs on past the edge, folded onto the face
+        int color = OverlayRenderer.argb(fade, 0xFFFFFF, OverlayRenderer.lit ? 1 : faceShade(face));
+        double plane = sign > 0 ? 1 : 0;
+        for (int y = (int) Math.floor(from + 1.0e-4); y < to - 1.0e-4; y++) {
+            BlockPos block = new BlockPos(x, y, z);
+            BlockPos air = block.relative(face);
+            DecalTracker.Key wall = new DecalTracker.Key(block.asLong(), face);
+            float[] rect = faceRect(level, block, face, plane);
+            if (rect == null || WALLS_TAKEN.contains(wall) || st.gone().contains(block.asLong())
+                    || level.getBlockState(air).isCollisionShapeFullBlock(level, air)) {
+                continue;
+            }
+            float b0 = (float) Math.max(rect[2], from - y), b1 = (float) Math.min(rect[3], to - y);
+            if (b1 <= b0) {
+                continue;
+            }
+            int light = OverlayRenderer.packedLight(level, air);
+            for (FloatArrayList out : (fused(level, block) ? SAND : SOIL)[variant]) {
+                for (int c = 0; c < 4; c++) {
+                    float a = c == 1 || c == 2 ? rect[1] : rect[0], b = c >= 2 ? b1 : b0;
+                    double offset = blockAlong + (acrossPositive ? a : 1 - a) - centreAlong;
+                    double row = fixed + away * Math.abs(y + b - edge) - centreFixed;
+                    vertex(out, block, face, plane, a, b, cam, SCORCH_LIFT, texel(turn, alongX, offset, row, false),
+                            texel(turn, alongX, offset, row, true), color);
+                }
+                end(out, face, light);
+            }
+            WALLS_TAKEN.add(wall);
         }
     }
 
@@ -577,7 +624,11 @@ final class DecalRenderer {
         place(local, up(face), b);
         double x = pos.getX() + local[0] - cam.x, y = pos.getY() + local[1] - cam.y, z = pos.getZ() + local[2] - cam.z;
         double distance = Math.sqrt(x * x + y * y + z * z);
-        double keep = Math.max(0, 1 - lift * Math.max(1, distance / 8) / distance);
+        // Seen at a slant a pixel spans more depth, and packs jitter the terrain by part of a pixel but not entities:
+        // pull further in by about a pixel's worth of the face's depth, which still lifts it only a hair off the face
+        double facing = Math.max(0.02, Math.abs(x * face.getStepX() + y * face.getStepY() + z * face.getStepZ()) / distance);
+        double slant = PIXEL_ANGLE * distance * Math.sqrt(1 - facing * facing) / facing;
+        double keep = Math.max(0, 1 - (lift * Math.max(1, distance / 8) + slant) / distance);
         out.add((float) (x * keep));
         out.add((float) (y * keep));
         out.add((float) (z * keep));

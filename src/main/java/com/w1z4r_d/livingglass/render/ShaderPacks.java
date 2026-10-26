@@ -3,8 +3,8 @@ package com.w1z4r_d.livingglass.render;
 import com.w1z4r_d.livingglass.LivingGlassClient;
 import it.unimi.dsi.fastutil.objects.Object2IntFunction;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.world.level.block.state.BlockState;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 
 /** Whether an Iris shader pack is active, looked up through Iris's public API without depending on it. */
@@ -12,11 +12,12 @@ final class ShaderPacks {
     private static final Object API;
     private static final Method IN_USE;
     /**
-     * Iris internals, not its API: the item id it tags geometry with for the pack, and the pack's ids of blocks. Null
+     * Iris internals, not its API: the item id it tags geometry with for the pack, and the pack's ids of items. Null
      * when they could not be reached (another Iris version), and then geometry is just drawn untagged.
      */
     private static final Object RENDER_STATE, SETTINGS;
-    private static final Method GET_ITEM, SET_ITEM, BLOCK_IDS;
+    private static final Method GET_ITEM, SET_ITEM, ITEM_IDS;
+    private static final Constructor<?> ITEM_NAME;
 
     static {
         Object api = null;
@@ -33,7 +34,8 @@ final class ShaderPacks {
         API = api;
         IN_USE = inUse;
         Object renderState = null, settings = null;
-        Method getItem = null, setItem = null, blockIds = null;
+        Method getItem = null, setItem = null, itemIds = null;
+        Constructor<?> itemName = null;
         if (inUse != null) {
             try {
                 Class<?> state = Class.forName("net.irisshaders.iris.uniforms.CapturedRenderingState");
@@ -42,7 +44,9 @@ final class ShaderPacks {
                 settings = rendering.getField("INSTANCE").get(null);
                 getItem = state.getMethod("getCurrentRenderedItem");
                 setItem = state.getMethod("setCurrentRenderedItem", int.class);
-                blockIds = rendering.getMethod("getBlockStateIds");
+                itemIds = rendering.getMethod("getItemIds");
+                itemName = Class.forName("net.irisshaders.iris.shaderpack.materialmap.NamespacedId")
+                        .getConstructor(String.class, String.class);
             } catch (ReflectiveOperationException | LinkageError e) {
                 setItem = null;
             }
@@ -51,26 +55,28 @@ final class ShaderPacks {
         SETTINGS = settings;
         GET_ITEM = getItem;
         SET_ITEM = setItem;
-        BLOCK_IDS = blockIds;
+        ITEM_IDS = itemIds;
+        ITEM_NAME = itemName;
     }
 
     private ShaderPacks() {
     }
 
     /**
-     * Submits geometry as if it were block held as an item: Iris tags what is submitted meanwhile with the pack's id
-     * for that block, so a pack with built-in materials (no PBR maps) gives it that block's material. Just submits
-     * when the pack has no id for the block or Iris could not be reached.
+     * Submits geometry as if it were the vanilla item of that name: Iris tags what is submitted meanwhile with the
+     * pack's id for the item, so a pack with built-in materials (no PBR maps) gives it that item's material. Just
+     * submits when the pack has no id for the item or Iris could not be reached.
      */
     @SuppressWarnings("unchecked")
-    static void submitAs(BlockState block, Runnable submit) {
+    static void submitAs(String item, Runnable submit) {
         Object previous = null;
         if (SET_ITEM != null) {
             try {
-                Object ids = BLOCK_IDS.invoke(SETTINGS);
-                if (ids instanceof Object2IntFunction<?> map && map.containsKey(block)) {
+                Object ids = ITEM_IDS.invoke(SETTINGS);
+                Object name = ITEM_NAME.newInstance("minecraft", item);
+                if (ids instanceof Object2IntFunction<?> map && map.containsKey(name)) {
                     previous = GET_ITEM.invoke(RENDER_STATE);
-                    SET_ITEM.invoke(RENDER_STATE, ((Object2IntFunction<Object>) map).getInt(block));
+                    SET_ITEM.invoke(RENDER_STATE, ((Object2IntFunction<Object>) map).getInt(name));
                 }
             } catch (ReflectiveOperationException | RuntimeException e) {
                 previous = null;
