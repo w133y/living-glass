@@ -70,6 +70,11 @@ public final class DecalTracker {
         public double plane;
         /** Part of the face the block's shape actually covers, in face coordinates {a0, a1, b0, b1}. */
         public float[] rect;
+        /**
+         * The ash on the neighbouring faces that meet this one at each corner (left-bottom, right-bottom, right-top,
+         * left-top in face coordinates), so the patches build up and fade together where they meet.
+         */
+        public Ash[][] corners = {{}, {}, {}, {}};
 
         Ash(long pos, Direction face) {
             this.pos = pos;

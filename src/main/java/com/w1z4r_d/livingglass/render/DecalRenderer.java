@@ -86,8 +86,6 @@ final class DecalRenderer {
     /** A splat fades out over the last quarter of its life. */
     private static final float SPLAT_FADE = 0.25f;
     private static final int CACHE_TICKS = 20;
-    /** How far neighbouring ash must have built up before a patch runs on into it. */
-    private static final float JOIN_AMOUNT = 0.3f;
 
     private DecalRenderer() {
     }
@@ -204,6 +202,24 @@ final class DecalRenderer {
         a.shade = faceShade(a.face);
         a.light = OverlayRenderer.packedLight(level, pos.relative(a.face));
         Direction t1 = across(a.face), t2 = up(a.face);
+        // Left, right, bottom and top neighbours, and which two of them meet at each corner
+        Direction[] sides = {t1.getOpposite(), t1, t2.getOpposite(), t2};
+        int[][] meet = {{0, 2}, {1, 2}, {1, 3}, {0, 3}};
+        for (int c = 0; c < 4; c++) {
+            List<Ash> near = new ArrayList<>(3);
+            for (int e : meet[c]) {
+                Ash n = beyond(all, pos, a.face, sides[e]);
+                if (n != null) {
+                    near.add(n);
+                }
+            }
+            Ash diagonal = all.get(new DecalTracker.Key(pos.relative(sides[meet[c][0]]).relative(sides[meet[c][1]]).asLong(),
+                    a.face));
+            if (diagonal != null) {
+                near.add(diagonal);
+            }
+            a.corners[c] = near.toArray(new Ash[0]);
+        }
         a.mask = (joined(all, pos, a.face, t1.getOpposite()) ? 0 : 1) | (joined(all, pos, a.face, t1) ? 0 : 2);
         if (a.kind == Kind.FULL) {
             a.mask |= (joined(all, pos, a.face, t2.getOpposite()) ? 0 : 4) | (joined(all, pos, a.face, t2) ? 0 : 8);
@@ -219,16 +235,18 @@ final class DecalRenderer {
 
     /**
      * Whether the ash on face continues past its edge toward t: onto the next block of the same floor or wall, or
-     * round the inside corner onto the wall (or floor) that meets it there.
+     * round the inside corner onto the wall (or floor) that meets it there. It may join ash that has only just
+     * started, as where they meet both show only as far as the fainter one has built up (see drawAsh).
      */
     private static boolean joined(Map<DecalTracker.Key, Ash> all, BlockPos pos, Direction face, Direction t) {
-        return ashy(all, pos.relative(t), face) || ashy(all, pos.relative(t).relative(face), t.getOpposite());
+        Ash n = beyond(all, pos, face, t);
+        return n != null && (n.target > 0 || n.amount > 0.02f);
     }
 
-    /** The ash on that face has built up enough to show, so this patch may run on into it without a faded edge. */
-    private static boolean ashy(Map<DecalTracker.Key, Ash> all, BlockPos pos, Direction face) {
-        Ash n = all.get(new DecalTracker.Key(pos.asLong(), face));
-        return n != null && n.amount > JOIN_AMOUNT;
+    /** The ash past the edge of face toward t: on the next block of the same surface, or round an inside corner. */
+    private static Ash beyond(Map<DecalTracker.Key, Ash> all, BlockPos pos, Direction face, Direction t) {
+        Ash n = all.get(new DecalTracker.Key(pos.relative(t).asLong(), face));
+        return n != null ? n : all.get(new DecalTracker.Key(pos.relative(t).relative(face).asLong(), t.getOpposite()));
     }
 
     private static void drawAsh(Ash a, BlockPos pos, Vec3 cam) {
@@ -245,9 +263,16 @@ final class DecalRenderer {
             mask = (mask & ~12) | ((mask & 4) << 1) | ((mask & 8) >> 1);
         }
         a.look.show(a.kind == Kind.FULL ? variant * 16 + mask : SIDE_BASE + variant * 4 + (mask & 3));
-        // White, as it multiplies the block under it, which is shaded already; how far it has built up picks which
-        // of its pixels show (see the ash textures' alpha)
-        int color = OverlayRenderer.argb(a.amount, 0xFFFFFF, 1);
+        // White, as it multiplies the block under it, which is shaded already. How far it has built up picks which of
+        // its pixels show (see the ash textures' alpha); at each corner only as far as the faintest ash meeting there,
+        // so neighbouring patches grow and fade into each other rather than one ending at the other's bare edge
+        float[] corner = new float[4];
+        for (int c = 0; c < 4; c++) {
+            corner[c] = a.amount;
+            for (Ash n : a.corners[c]) {
+                corner[c] = Math.min(corner[c], n.amount);
+            }
+        }
         int light = a.light;
         Melt look = a.look;
         float[] r = a.rect;
@@ -268,7 +293,7 @@ final class DecalRenderer {
                 float x0 = Math.max(r[0], i * step), x1 = Math.min(r[1], (i + 1) * step);
                 float y0 = Math.max(r[2], j * step), y1 = Math.min(r[3], (j + 1) * step);
                 if (x1 > x0 && y1 > y0) {
-                    rect(out, pos, a.face, a.plane, cam, x0, x1, y0, y1, flipU, flipV, color, light);
+                    rect(out, pos, a.face, a.plane, cam, x0, x1, y0, y1, flipU, flipV, corner, light);
                 }
             }
         }
@@ -873,14 +898,23 @@ final class DecalRenderer {
         return Math.abs(surface - edge) <= 1.0e-3;
     }
 
-    /** One cell of a face in face coordinates (x across, y up, 0..1), with the whole texture mapped over the face. */
+    /**
+     * One cell of a face in face coordinates (x across, y up, 0..1), with the whole texture mapped over the face, white
+     * with the alpha of the face's corners (left-bottom, right-bottom, right-top, left-top) blended across it.
+     */
     private static void rect(FloatArrayList out, BlockPos pos, Direction face, double plane, Vec3 cam,
-                             float x0, float x1, float y0, float y1, boolean flipU, boolean flipV, int color, int light) {
-        vertex(out, pos, face, plane, x0, y0, cam, ASH_LIFT, u(x0, flipU), v(y0, flipV), color);
-        vertex(out, pos, face, plane, x1, y0, cam, ASH_LIFT, u(x1, flipU), v(y0, flipV), color);
-        vertex(out, pos, face, plane, x1, y1, cam, ASH_LIFT, u(x1, flipU), v(y1, flipV), color);
-        vertex(out, pos, face, plane, x0, y1, cam, ASH_LIFT, u(x0, flipU), v(y1, flipV), color);
+                             float x0, float x1, float y0, float y1, boolean flipU, boolean flipV, float[] corner, int light) {
+        vertex(out, pos, face, plane, x0, y0, cam, ASH_LIFT, u(x0, flipU), v(y0, flipV), white(corner, x0, y0));
+        vertex(out, pos, face, plane, x1, y0, cam, ASH_LIFT, u(x1, flipU), v(y0, flipV), white(corner, x1, y0));
+        vertex(out, pos, face, plane, x1, y1, cam, ASH_LIFT, u(x1, flipU), v(y1, flipV), white(corner, x1, y1));
+        vertex(out, pos, face, plane, x0, y1, cam, ASH_LIFT, u(x0, flipU), v(y1, flipV), white(corner, x0, y1));
         end(out, face, light);
+    }
+
+    /** White with the corners' alpha blended to (x, y) of the face. */
+    private static int white(float[] corner, float x, float y) {
+        float bottom = corner[0] + (corner[1] - corner[0]) * x, top = corner[3] + (corner[2] - corner[3]) * x;
+        return OverlayRenderer.argb(bottom + (top - bottom) * y, 0xFFFFFF, 1);
     }
 
     private static float u(float x, boolean flip) {
