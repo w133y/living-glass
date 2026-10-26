@@ -56,8 +56,9 @@ final class DecalRenderer {
     private static final FloatArrayList[] scorchLists = lists(LIGHTNING_VARIANTS);
     private static final FloatArrayList[] emberLists = lists(LIGHTNING_VARIANTS);
     /**
-     * The burn mark on sand: its heart fused into pale opaque glass, which shader packs reflect like metal (its LabPBR
-     * map, or iron's built-in material in packs without PBR maps), in a thin see-through rim of sintered sand.
+     * The burn mark on sand: its heart melted into an opaque glass pool, which shader packs reflect like a mirror (its
+     * LabPBR map, or an ender pearl's built-in material in packs without PBR maps), in a thin see-through rim of
+     * sintered sand.
      */
     private static final FloatArrayList[] glassLists = lists(LIGHTNING_VARIANTS);
     private static final FloatArrayList[] sinterLists = lists(LIGHTNING_VARIANTS);
@@ -155,9 +156,9 @@ final class DecalRenderer {
             String glass = "lightning_glass_" + i;
             FloatArrayList quads = glassLists[i];
             if (OverlayRenderer.lit) {
-                // Solid, so the pack draws it before it works out reflections, and tagged as iron for packs that
-                // give built-in materials to what they know: pale glass then shines like polished metal
-                ShaderPacks.submitAs("iron_ingot", () -> OverlayRenderer.submitSolid(collector, poseStack, glass, quads));
+                // Solid, so the pack draws it before it works out reflections, and tagged as an ender pearl for packs
+                // that give built-in materials to what they know: theirs is mirror-smooth whatever its colour
+                ShaderPacks.submitAs("ender_pearl", () -> OverlayRenderer.submitSolid(collector, poseStack, glass, quads));
             } else {
                 OverlayRenderer.submitDecal(collector, poseStack, glass, quads);
             }

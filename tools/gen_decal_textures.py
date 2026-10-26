@@ -31,16 +31,16 @@ VARIANTS = 3
 SOOT = [(70, 60, 52, 120), (48, 42, 37, 175), (33, 29, 26, 205), (22, 19, 17, 220)]
 SNOW = [(255, 255, 255, 255), (240, 246, 248, 255), (219, 230, 236, 255), (194, 208, 216, 255)]
 EMBERS = [(255, 214, 110, 255), (255, 150, 40, 255), (200, 70, 20, 255)]
-# Sand melted into glass: two tones of pale glass in the pool, its thin edge, the veins, a glint, the sintered rim,
-# and the glass's LabPBR specular values (red: smoothness, green: 230 = iron, so metal, alpha 255: no glow)
-GLASS = [(206, 214, 206, 255), (188, 200, 192, 255)]
-GLASS_EDGE = (160, 160, 136, 255)
-VEIN = (194, 202, 194, 255)
-GLINT = (246, 250, 246, 255)
+# Sand melted into a glass pool, shaded like a vanilla glass pane: lit side, clear middle and thick side of the
+# pool, its bright and dark rim, glints, the veins, the sintered rim round it, and the glass's LabPBR specular values
+# (red: smoothness, all mirror-smooth; green: 230 = iron, so it reflects strongly; alpha 255: no glow)
+GLASS_LIT, GLASS_CLEAR, GLASS_THICK = (222, 232, 226, 255), (192, 205, 197, 255), (164, 181, 175, 255)
+RIM_LIT, RIM_THICK = (240, 246, 242, 255), (126, 134, 118, 255)
+GLINT = (250, 253, 251, 255)
+VEIN = (196, 206, 198, 255)
 SINTER = (198, 182, 138, 110)
-GLASS_SPECULAR = (240, 230, 0, 255)
-EDGE_SPECULAR = (170, 230, 0, 255)
-GLINT_SPECULAR = (255, 230, 0, 255)
+GLASS_SPECULAR = (255, 230, 0, 255)
+VEIN_SPECULAR = (235, 230, 0, 255)
 
 
 def smooth(rnd, size, cells, amp):
@@ -199,22 +199,25 @@ for variant, (heart, rings, noise, stretch, arms_range, length_range, width, for
     img.save(f"{out}/lightning_scorch_{variant}.png")
     embers.save(f"{out}/lightning_embers_{variant}.png")
 
-    # The same mark melted into glass: the heart a pale pool with a thin darker edge and short diagonal glints like
-    # vanilla glass, the cracks thin veins, and a one-pixel rim of sintered sand round the pool
+    # The same mark melted into glass: the heart a glass pool shaded like a vanilla pane (lit from the top left, a
+    # bright rim there and a dark thick one opposite, short diagonal glints), the cracks thin veins, and a one-pixel
+    # rim of sintered sand round the pool
     pool = {(x, y) for y in range(L) for x in range(L) if mark[y][x] == 3}
+    outside = {(x, y) for y in range(L) for x in range(L)} - pool
 
     def near(x, y, cells):
         return any((x + dx, y + dy) in cells for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)))
 
+    cx = sum(x for x, _ in pool) / len(pool)
+    cy = sum(y for _, y in pool) / len(pool)
+    reach = max(abs(x - cx) + abs(y - cy) for x, y in pool)
     grnd = random.Random(53 + variant * 977)
-    tone = smooth(grnd, L, 6, 1.0)
+    inner = sorted(c for c in pool if not near(c[0], c[1], outside) and (c[0] - cx) + (c[1] - cy) < 0)
     glints = set()
-    outside = {(x, y) for y in range(L) for x in range(L)} - pool
-    inner = sorted(c for c in pool if not near(c[0], c[1], outside))
-    for _ in range(grnd.randint(3, 5)):
+    for _ in range(2):
         x, y = grnd.choice(inner)
-        for i in range(grnd.randint(2, 3)):
-            if (x + i, y - i) in pool:
+        for i in range(grnd.randint(2, 4)):
+            if (x + i, y - i) in pool and not near(x + i, y - i, outside):
                 glints.add((x + i, y - i))
     glass = Image.new("RGBA", (L + 2 * M, L + 2 * M), (0, 0, 0, 0))
     specular = Image.new("RGBA", (L + 2 * M, L + 2 * M), (0, 0, 0, 0))
@@ -223,13 +226,18 @@ for variant, (heart, rings, noise, stretch, arms_range, length_range, width, for
         for x in range(L):
             at = (x + M, y + M)
             if (x, y) in pool:
-                edge = near(x, y, outside)
-                colour = GLINT if (x, y) in glints else GLASS_EDGE if edge else GLASS[0 if tone[y][x] > 0 else 1]
+                slope = ((x - cx) + (y - cy)) / reach  # -1 at the lit top left, 1 at the thick bottom right
+                if near(x, y, outside):
+                    colour = RIM_LIT if slope < 0 else RIM_THICK
+                elif (x, y) in glints:
+                    colour = GLINT
+                else:
+                    colour = GLASS_LIT if slope < -0.4 else GLASS_THICK if slope > 0.4 else GLASS_CLEAR
                 glass.putpixel(at, colour)
-                specular.putpixel(at, GLINT_SPECULAR if (x, y) in glints else EDGE_SPECULAR if edge else GLASS_SPECULAR)
+                specular.putpixel(at, GLASS_SPECULAR)
             elif (x, y) in spine and mark[y][x] >= 1:
                 glass.putpixel(at, VEIN)
-                specular.putpixel(at, GLASS_SPECULAR)
+                specular.putpixel(at, VEIN_SPECULAR)
             elif near(x, y, pool):
                 sinter.putpixel(at, SINTER)
     glass.save(f"{out}/lightning_glass_{variant}.png")
