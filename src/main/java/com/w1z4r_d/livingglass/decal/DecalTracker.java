@@ -3,7 +3,6 @@ package com.w1z4r_d.livingglass.decal;
 import com.w1z4r_d.livingglass.LivingGlassConfig;
 import com.w1z4r_d.livingglass.compat.Compat;
 import com.w1z4r_d.livingglass.glass.GlassTracker;
-import com.w1z4r_d.livingglass.glass.Melt;
 import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
@@ -60,21 +59,16 @@ public final class DecalTracker {
         public final int seed;
         public Kind kind = Kind.SIDE;
         public float amount, target;
-        public final Melt look = new Melt();
         // Render data refreshed about once a second
         public long renderTime = -1;
         public float shade;
         public int light;
-        public int mask;
         /** Block-local position of the face's surface along its normal. */
         public double plane;
         /** Part of the face the block's shape actually covers, in face coordinates {a0, a1, b0, b1}. */
         public float[] rect;
-        /**
-         * The ash on the neighbouring faces that meet this one at each corner (left-bottom, right-bottom, right-top,
-         * left-top in face coordinates), so the patches build up and fade together where they meet.
-         */
-        public Ash[][] corners = {{}, {}, {}, {}};
+        /** The ash past each edge (left, right, bottom, top in face coordinates), on this surface or round a corner. */
+        public final Ash[] edges = new Ash[4];
         /**
          * Corners where the ash runs on past both edges but not round the corner itself (a wall behind this block
          * that ends at the next one): the patch fades out there instead of stopping square.
@@ -219,7 +213,6 @@ public final class DecalTracker {
             Ash a = it.next();
             a.amount = GlassTracker.approach(a.amount, a.target, a.kind == Kind.FULL ? t.ashBuildSeconds : t.ashSideBuildSeconds,
                     t.ashFadeSeconds);
-            a.look.tick(t.meltSeconds);
             if (a.amount <= 0 && a.target <= 0) {
                 it.remove();
             }

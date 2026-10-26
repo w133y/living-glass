@@ -1,12 +1,8 @@
 """Ash, snow splat and lightning scorch textures for Living Glass, in the vanilla manner: a few fixed shades grouped
 into clean clusters, and one texture pixel per block pixel (1/16 block).
 
-ash_full_{variant}_{mask}: scorch under or behind a fire, covering nearly the whole face. Mask bits (1 left,
-2 right, 4 bottom, 8 top) mark edges that fade out; an edge without its bit continues into the next block's ash.
-ash_side_{variant}_{mask}: soot on a block next to a fire, from the bottom up to about half the face. Only the
-left/right bits are used; the top always fades out.
-Both are dark soot laid over the block in a few crisp steps of opacity, most opaque in the heart; how far the ash
-has built up scales its opacity, so it comes and goes smoothly.
+ash_sheet: soot left by fire, one seamless 64x64 sheet (4x4 blocks) that burnt faces take by their place in the
+world, dark soot in a few crisp steps of opacity; how strong it shows is worked out per pixel when it is drawn.
 snow_{variant}: a snowball splat in a 14x14 square (14/16 of a block), in SNOW_VARIANTS shapes: a round lump lit
 from the top left with a few bits of snow thrown off round it.
 lightning_scorch_{variant}: a 64x64 burn mark spanning 4x4 blocks where lightning struck, in LIGHTNING_VARIANTS
@@ -33,8 +29,8 @@ os.makedirs(out, exist_ok=True)
 S = 16
 VARIANTS = 3
 
-# Ash as a multiplier, from the edge of a patch to its heart
-ASH_SOOT = [(40, 36, 33, 70), (32, 29, 26, 110), (26, 23, 21, 150), (20, 18, 16, 185)]
+# Soot, from thin to thick
+ASH_SOOT = [(40, 36, 33, 125), (32, 29, 26, 165), (26, 23, 21, 200), (20, 18, 16, 228)]
 SNOW = [(255, 255, 255, 255), (240, 246, 248, 255), (219, 230, 236, 255), (194, 208, 216, 255)]
 EMBERS = [(255, 214, 110, 255), (255, 150, 40, 255), (200, 70, 20, 255)]
 # Sand melted into a glass pool, shaded like a vanilla glass pane: lit side, clear middle and thick side of the
@@ -83,39 +79,35 @@ def edge_dist(x, y, mask):
     return min(d)
 
 
-for variant in range(VARIANTS):
-    rnd = random.Random(7 + variant * 1000)
-    rag = smooth(rnd, S, 3, 1.3)
-    tone = smooth(rnd, S, 4, 0.9)
+# Ash: one seamless 64x64 sheet of soot (4x4 blocks) that every burnt face takes by its place in the world, so the
+# pattern runs on across block edges; how dark it shows where is worked out per pixel when it is drawn
+L = 64
+rnd = random.Random(7)
 
-    # Full scorch: darkest in the middle, lighter toward edges that fade out. Toward an edge that carries on into the
-    # next block's ash the shade goes by the fading edges alone, so the two blocks meet without a seam.
-    for mask in range(16):
-        img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-        for y in range(S):
-            for x in range(S):
-                d = edge_dist(x, y, mask) + rag[y][x]
-                if d < 1:
-                    continue
-                level = 0 if d < 2 else 1 if d < 3 else 2 if d < 4.5 else 3
-                if level == 3 and min(x, S - 1 - x, y, S - 1 - y) >= 2 and tone[y][x] < -0.35:
-                    level = 2  # a few lighter clumps in the heart, kept off the edges so joins match
-                img.putpixel((x, y), ASH_SOOT[level])
-        img.save(f"{out}/ash_full_{variant}_{mask}.png")
 
-    # Side soot: rises from the bottom in steps with a ragged top
-    for mask in range(4):
-        img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-        for y in range(S):
-            for x in range(S):
-                rise = (S - 1 - y) + rag[y][x] * 1.5
-                side = edge_dist(x, y, mask) + rag[y][x]
-                if rise > 8 or side < 1:
-                    continue
-                level = 3 if rise < 2 else 2 if rise < 4.5 else 1 if rise < 6.5 else 0
-                level = min(level, int(side) - 1) if side < 4 else level
-                img.putpixel((x, y), ASH_SOOT[max(0, level)])
-        img.save(f"{out}/ash_side_{variant}_{mask}.png")
+def wrapped(cells, amp):
+    """Clustered noise over the sheet that wraps round, so the sheet tiles."""
+    g = [[rnd.uniform(-amp, amp) for _ in range(cells)] for _ in range(cells)]
+    n = [[0.0] * L for _ in range(L)]
+    for y in range(L):
+        for x in range(L):
+            gx, gy = x / L * cells, y / L * cells
+            ix, iy, fx, fy = int(gx), int(gy), gx - int(gx), gy - int(gy)
+            fx, fy = fx * fx * (3 - 2 * fx), fy * fy * (3 - 2 * fy)
+            a, b = g[iy][ix], g[iy][(ix + 1) % cells]
+            c, d = g[(iy + 1) % cells][ix], g[(iy + 1) % cells][(ix + 1) % cells]
+            n[y][x] = (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy
+    return n
+
+
+coarse, fine = wrapped(8, 1.0), wrapped(16, 0.5)
+img = Image.new("RGBA", (L, L), (0, 0, 0, 0))
+for y in range(L):
+    for x in range(L):
+        t = coarse[y][x] + fine[y][x]
+        level = 0 if t < -0.55 else 1 if t < 0 else 2 if t < 0.5 else 3
+        img.putpixel((x, y), ASH_SOOT[level])
+img.save(f"{out}/ash_sheet.png")
 
 
 # Snowball splats: a round lump, lit from the top left with a shadowed rim at the bottom right, and a few bits

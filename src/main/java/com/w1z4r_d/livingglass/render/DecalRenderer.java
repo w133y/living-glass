@@ -7,7 +7,6 @@ import com.w1z4r_d.livingglass.decal.DecalTracker;
 import com.w1z4r_d.livingglass.decal.DecalTracker.Ash;
 import com.w1z4r_d.livingglass.decal.DecalTracker.Kind;
 import com.w1z4r_d.livingglass.decal.DecalTracker.Splat;
-import com.w1z4r_d.livingglass.glass.Melt;
 import it.unimi.dsi.fastutil.doubles.DoubleArrayList;
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
@@ -31,10 +30,12 @@ import java.util.Set;
 
 /** Draws ash and snowball splats on block faces, with the same pixel melt as the glass when ash patches merge. */
 final class DecalRenderer {
-    private static final int VARIANTS = 3;
-    /** Full scorch textures: variant x 16 edge masks; side ash: variant x 4 left/right masks, after them. */
-    private static final int SIDE_BASE = VARIANTS * 16;
-    private static final FloatArrayList[] ashLists = lists(SIDE_BASE + VARIANTS * 4);
+    /** Ash: one soot sheet over ASH_SHEET x ASH_SHEET blocks, thinning out over ASH_EDGE toward a patch's edges. */
+    private static final FloatArrayList ashList = new FloatArrayList();
+    private static final int ASH_SHEET = 4;
+    private static final float ASH_EDGE = 0.3f;
+    /** Which two edges (left, right, bottom, top) meet at each corner: left-bottom, right-bottom, right-top, left-top. */
+    private static final int[][] CORNER_EDGES = {{0, 2}, {1, 2}, {1, 3}, {0, 3}};
     private static final int SNOW_VARIANTS = 6;
     private static final FloatArrayList[] snowLists = lists(SNOW_VARIANTS);
     /**
@@ -99,9 +100,7 @@ final class DecalRenderer {
     }
 
     static void render(PoseStack poseStack, SubmitNodeCollector collector, Level level, Vec3 cam, LivingGlassConfig cfg) {
-        for (FloatArrayList list : ashLists) {
-            list.clear();
-        }
+        ashList.clear();
         for (FloatArrayList list : snowLists) {
             list.clear();
         }
@@ -150,11 +149,7 @@ final class DecalRenderer {
                 drawStrike(level, st, cam, now - st.born(), scorchLife);
             }
         }
-        for (int i = 0; i < ashLists.length; i++) {
-            String name = i < SIDE_BASE ? "ash_full_" + i / 16 + "_" + i % 16
-                    : "ash_side_" + (i - SIDE_BASE) / 4 + "_" + (i - SIDE_BASE) % 4;
-            OverlayRenderer.submitDecal(collector, poseStack, name, ashLists[i]);
-        }
+        OverlayRenderer.submitDecal(collector, poseStack, "ash_sheet", ashList);
         for (int i = 0; i < SNOW_VARIANTS; i++) {
             OverlayRenderer.submitDecal(collector, poseStack, "snow_" + i, snowLists[i]);
         }
@@ -196,45 +191,27 @@ final class DecalRenderer {
         }
     }
 
-    /** Light and which neighbouring faces carry ash too, so neighbouring patches join without an edge. */
+    /** Light, shape and which neighbouring faces carry ash too, so neighbouring patches run into each other. */
     private static void refresh(Level level, Map<DecalTracker.Key, Ash> all, Ash a, BlockPos pos, long now) {
         a.renderTime = now + Math.floorMod(a.seed, 10);
         a.shade = faceShade(a.face);
         a.light = OverlayRenderer.packedLight(level, pos.relative(a.face));
         Direction t1 = across(a.face), t2 = up(a.face);
-        // Left, right, bottom and top neighbours, and which two of them meet at each corner
-        Direction[] sides = {t1.getOpposite(), t1, t2.getOpposite(), t2};
-        int[][] meet = {{0, 2}, {1, 2}, {1, 3}, {0, 3}};
+        Direction[] sides = {t1.getOpposite(), t1, t2.getOpposite(), t2}; // left, right, bottom, top
+        for (int e = 0; e < 4; e++) {
+            a.edges[e] = beyond(all, pos, a.face, sides[e]);
+        }
         for (int c = 0; c < 4; c++) {
-            Direction s0 = sides[meet[c][0]], s1 = sides[meet[c][1]];
-            Ash n0 = beyond(all, pos, a.face, s0), n1 = beyond(all, pos, a.face, s1);
-            List<Ash> near = new ArrayList<>(3);
-            if (n0 != null) {
-                near.add(n0);
-            }
-            if (n1 != null) {
-                near.add(n1);
-            }
-            Ash diagonal = null;
+            int e0 = CORNER_EDGES[c][0], e1 = CORNER_EDGES[c][1];
+            Ash n0 = a.edges[e0], n1 = a.edges[e1];
+            boolean round = false;
             if (n0 != null && n1 != null) {
                 // Round the corner: the next block of this surface, or past either neighbour toward the other side
-                diagonal = all.get(new DecalTracker.Key(pos.relative(s0).relative(s1).asLong(), a.face));
-                if (diagonal == null) {
-                    diagonal = beyond(all, BlockPos.of(n0.pos), n0.face, s1);
-                }
-                if (diagonal == null) {
-                    diagonal = beyond(all, BlockPos.of(n1.pos), n1.face, s0);
-                }
+                round = all.containsKey(new DecalTracker.Key(pos.relative(sides[e0]).relative(sides[e1]).asLong(), a.face))
+                        || beyond(all, BlockPos.of(n0.pos), n0.face, sides[e1]) != null
+                        || beyond(all, BlockPos.of(n1.pos), n1.face, sides[e0]) != null;
             }
-            if (diagonal != null) {
-                near.add(diagonal);
-            }
-            a.notch[c] = n0 != null && n1 != null && diagonal == null;
-            a.corners[c] = near.toArray(new Ash[0]);
-        }
-        a.mask = (joined(all, pos, a.face, t1.getOpposite()) ? 0 : 1) | (joined(all, pos, a.face, t1) ? 0 : 2);
-        if (a.kind == Kind.FULL) {
-            a.mask |= (joined(all, pos, a.face, t2.getOpposite()) ? 0 : 4) | (joined(all, pos, a.face, t2) ? 0 : 8);
+            a.notch[c] = n0 != null && n1 != null && !round;
         }
         VoxelShape shape = level.getBlockState(pos).getShape(level, pos);
         Direction.Axis axis = a.face.getAxis();
@@ -245,72 +222,117 @@ final class DecalRenderer {
         a.rect = faceRect(level, pos, a.face, surface);
     }
 
-    /**
-     * Whether the ash on face continues past its edge toward t: onto the next block of the same floor or wall, or
-     * round the inside corner onto the wall (or floor) that meets it there. It may join ash that has only just
-     * started, as where they meet both show only as far as the fainter one has built up (see drawAsh).
-     */
-    private static boolean joined(Map<DecalTracker.Key, Ash> all, BlockPos pos, Direction face, Direction t) {
-        Ash n = beyond(all, pos, face, t);
-        return n != null && (n.target > 0 || n.amount > 0.02f);
-    }
-
     /** The ash past the edge of face toward t: on the next block of the same surface, or round an inside corner. */
     private static Ash beyond(Map<DecalTracker.Key, Ash> all, BlockPos pos, Direction face, Direction t) {
         Ash n = all.get(new DecalTracker.Key(pos.relative(t).asLong(), face));
         return n != null ? n : all.get(new DecalTracker.Key(pos.relative(t).relative(face).asLong(), t.getOpposite()));
     }
 
+    /**
+     * Ash on one face: the soot sheet laid on by its place in the world, as strong at each pixel as the ash has built
+     * up there. Toward an edge it runs on past, it meets the next patch halfway between their strengths, so the two
+     * blend; toward an edge with no ash beyond, and into a corner it does not run round, it thins out over a few
+     * pixels with a ragged edge. Soot beside a fire climbs from the ground to about half way up. Each pixel is drawn
+     * at one strength, runs of equal pixels as one quad.
+     */
     private static void drawAsh(Ash a, BlockPos pos, Vec3 cam) {
-        int style = OverlayRenderer.hash(a.seed);
-        int variant = Math.floorMod(style >>> 4, VARIANTS);
-        boolean flipU = (style & 4) != 0;
-        // Full scorch may also turn upside down; side ash always rises from the bottom
-        boolean flipV = a.kind == Kind.FULL && (style & 8) != 0;
-        int mask = a.mask;
-        if (flipU) {
-            mask = (mask & ~3) | ((mask & 1) << 1) | ((mask & 2) >> 1);
-        }
-        if (flipV) {
-            mask = (mask & ~12) | ((mask & 4) << 1) | ((mask & 8) >> 1);
-        }
-        a.look.show(a.kind == Kind.FULL ? variant * 16 + mask : SIDE_BASE + variant * 4 + (mask & 3));
-        // As opaque as it has built up, at each corner only as far as the faintest ash meeting there, so neighbouring
-        // patches grow and fade into each other rather than one ending at the other's bare edge
-        float[] corner = new float[4];
-        for (int c = 0; c < 4; c++) {
-            corner[c] = a.notch[c] ? 0 : a.amount;
-            for (Ash n : a.corners[c]) {
-                corner[c] = Math.min(corner[c], n.amount);
-            }
-        }
-        int light = a.light;
-        Melt look = a.look;
         float[] r = a.rect;
         if (r == null) {
             return;
         }
-        // Where the corners differ, one cell per pixel, each a pixel of the texture shown whole or not at all
-        boolean even = corner[0] == corner[1] && corner[1] == corner[2] && corner[2] == corner[3];
-        int cells = look.melting() || !even ? OverlayRenderer.GRID : 1;
-        float step = 1f / cells;
-        for (int i = 0; i < cells; i++) {
-            for (int j = 0; j < cells; j++) {
-                FloatArrayList out = ashLists[look.tex];
-                if (look.melting()) {
-                    float rank = (OverlayRenderer.hash(a.seed + i * 131 + j * 7919) & 0xFFFF) / 65536f;
-                    if ((look.reversed ? 1 - rank : rank) >= look.blend) {
-                        out = ashLists[look.prevTex];
-                    }
-                }
-                float x0 = Math.max(r[0], i * step), x1 = Math.min(r[1], (i + 1) * step);
-                float y0 = Math.max(r[2], j * step), y1 = Math.min(r[3], (j + 1) * step);
-                if (x1 > x0 && y1 > y0) {
-                    rect(out, pos, a.face, a.plane, cam, x0, x1, y0, y1, flipU, flipV,
-                            even ? soot(corner[0], a.shade) : pixel(a, corner, i, j, step), light);
-                }
+        float[] strength = new float[256];
+        boolean even = true;
+        for (int j = 0; j < 16; j++) {
+            for (int i = 0; i < 16; i++) {
+                float v = Math.round(ashAt(a, i, j) * 32) / 32f; // a few steps, so equal pixels merge into runs
+                strength[j * 16 + i] = v;
+                even &= v == strength[0];
             }
         }
+        if (even) {
+            ashQuad(pos, a, r[0], r[1], r[2], r[3], strength[0], cam);
+            return;
+        }
+        for (int j = 0; j < 16; j++) {
+            float y0 = Math.max(r[2], j / 16f), y1 = Math.min(r[3], (j + 1) / 16f);
+            if (y1 <= y0) {
+                continue;
+            }
+            for (int i = 0; i < 16; ) {
+                float v = strength[j * 16 + i];
+                int run = i + 1;
+                while (run < 16 && strength[j * 16 + run] == v) {
+                    run++;
+                }
+                float x0 = Math.max(r[0], i / 16f), x1 = Math.min(r[1], run / 16f);
+                if (v > 0.004f && x1 > x0) {
+                    ashQuad(pos, a, x0, x1, y0, y1, v, cam);
+                }
+                i = run;
+            }
+        }
+    }
+
+    /** How strong the ash on face a shows at pixel (i, j) of the face (see drawAsh). */
+    private static float ashAt(Ash a, int i, int j) {
+        float x = (i + 0.5f) / 16, y = (j + 0.5f) / 16;
+        float[] toEdge = {x, 1 - x, y, 1 - y};
+        boolean side = a.kind == Kind.SIDE;
+        // A pixel or two either way, so a thinning edge is ragged rather than straight
+        int bits = OverlayRenderer.hash(a.seed + i * 131 + j * 7919);
+        float ragged = ((bits & 0xFF) / 255f - 0.5f) * 3 / 16;
+        float v = a.amount, shape = 1;
+        for (int e = 0; e < 4; e++) {
+            if (side && e == 3) {
+                continue; // soot beside a fire always thins out upward, below
+            }
+            Ash n = a.edges[e];
+            if (n != null) {
+                v += (n.amount - a.amount) * Math.max(0, 0.5f - toEdge[e]); // halfway between the two at the edge
+            } else if (!(side && e == 2)) {
+                shape *= thinning(toEdge[e] + ragged, ASH_EDGE);
+            }
+        }
+        for (int c = 0; c < 4; c++) {
+            if (a.notch[c]) {
+                float dx = toEdge[CORNER_EDGES[c][0]], dy = toEdge[CORNER_EDGES[c][1]];
+                shape *= thinning((float) Math.sqrt(dx * dx + dy * dy) + ragged, ASH_EDGE * 1.5f);
+            }
+        }
+        if (side) {
+            shape *= 1 - thinning(y + ragged - 0.2f, 0.35f);
+        }
+        return Math.clamp(v, 0f, 1f) * shape;
+    }
+
+    /** 0 at distance 0, rising smoothly to 1 at width. */
+    private static float thinning(float distance, float width) {
+        float t = Math.clamp(distance / width, 0f, 1f);
+        return t * t * (3 - 2 * t);
+    }
+
+    /**
+     * A rectangle {x0..x1, y0..y1} of an ash face with the soot sheet over it by world position (ASH_SHEET blocks to a
+     * sheet, its v running down walls), as opaque as strength.
+     */
+    private static void ashQuad(BlockPos pos, Ash a, float x0, float x1, float y0, float y1, float strength, Vec3 cam) {
+        Direction face = a.face;
+        Direction.Axis axis = face.getAxis();
+        // The two world axes the sheet lies along on this face
+        int uAxis = axis == Direction.Axis.X ? 2 : 0, vAxis = axis == Direction.Axis.Y ? 2 : 1;
+        int[] block = {pos.getX(), pos.getY(), pos.getZ()};
+        int color = soot(strength, a.shade);
+        for (int c = 0; c < 4; c++) {
+            float fx = c == 1 || c == 2 ? x1 : x0, fy = c >= 2 ? y1 : y0;
+            double[] local = new double[3];
+            local[axis.ordinal()] = a.plane;
+            place(local, across(face), fx);
+            place(local, up(face), fy);
+            float u = (float) ((Math.floorMod(block[uAxis], ASH_SHEET) + local[uAxis]) / ASH_SHEET);
+            float w = (float) ((Math.floorMod(block[vAxis], ASH_SHEET) + local[vAxis]) / ASH_SHEET);
+            vertex(ashList, pos, face, a.plane, fx, fy, cam, ASH_LIFT, u, axis == Direction.Axis.Y ? w : 1 - w, color);
+        }
+        end(ashList, face, a.light);
     }
 
     /**
@@ -912,41 +934,9 @@ final class DecalRenderer {
         return Math.abs(surface - edge) <= 1.0e-3;
     }
 
-    /** One cell of a face in face coordinates (x across, y up, 0..1), with the whole texture mapped over the face. */
-    private static void rect(FloatArrayList out, BlockPos pos, Direction face, double plane, Vec3 cam,
-                             float x0, float x1, float y0, float y1, boolean flipU, boolean flipV, int color, int light) {
-        vertex(out, pos, face, plane, x0, y0, cam, ASH_LIFT, u(x0, flipU), v(y0, flipV), color);
-        vertex(out, pos, face, plane, x1, y0, cam, ASH_LIFT, u(x1, flipU), v(y0, flipV), color);
-        vertex(out, pos, face, plane, x1, y1, cam, ASH_LIFT, u(x1, flipU), v(y1, flipV), color);
-        vertex(out, pos, face, plane, x0, y1, cam, ASH_LIFT, u(x0, flipU), v(y1, flipV), color);
-        end(out, face, light);
-    }
-
-    /**
-     * The colour of pixel cell (i, j) of an ash face, with the corners' alpha (left-bottom, right-bottom,
-     * right-top, left-top) blended to its middle, give or take a little per pixel where it is neither built up nor
-     * gone, so a patch fading toward a corner ends in a ragged pixel edge rather than a straight one.
-     */
-    private static int pixel(Ash a, float[] corner, int i, int j, float step) {
-        float x = (i + 0.5f) * step, y = (j + 0.5f) * step;
-        float bottom = corner[0] + (corner[1] - corner[0]) * x, top = corner[3] + (corner[2] - corner[3]) * x;
-        float alpha = bottom + (top - bottom) * y;
-        float jitter = ((OverlayRenderer.hash(a.seed + i * 131 + j * 7919 + 17) & 0xFF) / 255f - 0.5f) * 0.4f;
-        alpha += jitter * (1 - Math.abs(2 * alpha - 1));
-        return soot(Math.clamp(alpha, 0f, 1f), a.shade);
-    }
-
     /** Vertex colour of ash as opaque as alpha, shaded like its face (shader packs shade it themselves). */
     private static int soot(float alpha, float shade) {
         return OverlayRenderer.argb(alpha, 0xFFFFFF, OverlayRenderer.lit ? 1 : shade);
-    }
-
-    private static float u(float x, boolean flip) {
-        return flip ? 1 - x : x;
-    }
-
-    private static float v(float y, boolean flip) {
-        return flip ? y : 1 - y; // v grows downward in the texture
     }
 
     /**
