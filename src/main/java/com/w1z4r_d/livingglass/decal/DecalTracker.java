@@ -75,6 +75,11 @@ public final class DecalTracker {
          * left-top in face coordinates), so the patches build up and fade together where they meet.
          */
         public Ash[][] corners = {{}, {}, {}, {}};
+        /**
+         * Corners where the ash runs on past both edges but not round the corner itself (a wall behind this block
+         * that ends at the next one): the patch fades out there instead of stopping square.
+         */
+        public final boolean[] notch = new boolean[4];
 
         Ash(long pos, Direction face) {
             this.pos = pos;

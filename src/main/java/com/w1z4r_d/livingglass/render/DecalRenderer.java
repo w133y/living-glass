@@ -206,18 +206,30 @@ final class DecalRenderer {
         Direction[] sides = {t1.getOpposite(), t1, t2.getOpposite(), t2};
         int[][] meet = {{0, 2}, {1, 2}, {1, 3}, {0, 3}};
         for (int c = 0; c < 4; c++) {
+            Direction s0 = sides[meet[c][0]], s1 = sides[meet[c][1]];
+            Ash n0 = beyond(all, pos, a.face, s0), n1 = beyond(all, pos, a.face, s1);
             List<Ash> near = new ArrayList<>(3);
-            for (int e : meet[c]) {
-                Ash n = beyond(all, pos, a.face, sides[e]);
-                if (n != null) {
-                    near.add(n);
+            if (n0 != null) {
+                near.add(n0);
+            }
+            if (n1 != null) {
+                near.add(n1);
+            }
+            Ash diagonal = null;
+            if (n0 != null && n1 != null) {
+                // Round the corner: the next block of this surface, or past either neighbour toward the other side
+                diagonal = all.get(new DecalTracker.Key(pos.relative(s0).relative(s1).asLong(), a.face));
+                if (diagonal == null) {
+                    diagonal = beyond(all, BlockPos.of(n0.pos), n0.face, s1);
+                }
+                if (diagonal == null) {
+                    diagonal = beyond(all, BlockPos.of(n1.pos), n1.face, s0);
                 }
             }
-            Ash diagonal = all.get(new DecalTracker.Key(pos.relative(sides[meet[c][0]]).relative(sides[meet[c][1]]).asLong(),
-                    a.face));
             if (diagonal != null) {
                 near.add(diagonal);
             }
+            a.notch[c] = n0 != null && n1 != null && diagonal == null;
             a.corners[c] = near.toArray(new Ash[0]);
         }
         a.mask = (joined(all, pos, a.face, t1.getOpposite()) ? 0 : 1) | (joined(all, pos, a.face, t1) ? 0 : 2);
@@ -268,7 +280,7 @@ final class DecalRenderer {
         // so neighbouring patches grow and fade into each other rather than one ending at the other's bare edge
         float[] corner = new float[4];
         for (int c = 0; c < 4; c++) {
-            corner[c] = a.amount;
+            corner[c] = a.notch[c] ? 0 : a.amount;
             for (Ash n : a.corners[c]) {
                 corner[c] = Math.min(corner[c], n.amount);
             }
@@ -279,7 +291,9 @@ final class DecalRenderer {
         if (r == null) {
             return;
         }
-        int cells = look.melting() ? OverlayRenderer.GRID : 1;
+        // Cells so the corners' alpha blends evenly across the face, not along the diagonal of one quad
+        boolean even = corner[0] == corner[1] && corner[1] == corner[2] && corner[2] == corner[3];
+        int cells = look.melting() ? OverlayRenderer.GRID : even ? 1 : 4;
         float step = 1f / cells;
         for (int i = 0; i < cells; i++) {
             for (int j = 0; j < cells; j++) {
