@@ -351,8 +351,8 @@ final class DecalRenderer {
                             continue;
                         }
                         BlockPos block = new BlockPos(ground.getX() + dx, groundY + k, ground.getZ() + dz);
-                        // The struck column's posts are charred all the way up, others smoke from the ground
-                        sides(level, variant, st, turn, block, surface[i], dx != 0 || dz != 0, cam, fade);
+                        // Posts, fences and stair risers smoke from the ground up
+                        sides(level, variant, st, turn, block, surface[i], cam, fade);
                         // Every top of its shape: both treads of a stair, a fence post and its rails
                         for (double local : tops(level, block)) {
                             for (FloatArrayList out : (fused(level, block) ? SAND : SOIL)[variant]) {
@@ -523,13 +523,13 @@ final class DecalRenderer {
 
     /**
      * Soot on the side faces inside a block's cell (fence posts and rails, the riser of a stair) of a column the mark
-     * lies on, on the block's own pixel grid: along the face it takes the mark's texels along the ground there, and
-     * going up the face it steps one texel per pixel straight out from the face, away from the strike, so the soot
-     * climbs from the ground and thins with height. With climb off (the struck column) every pixel up the face takes
-     * the texel at its foot: posts charred all the way up.
+     * lies on, on the block's own pixel grid: along the face each pixel takes the mark's texel on the ground there,
+     * and each pixel row higher up takes its texels from further out, away from the strike. How much further grows
+     * with the face's distance from the strike, so a post at the strike is charred all the way up and soot on posts
+     * further out thins sooner with height, with no step between them.
      */
     private static void sides(Level level, int variant, DecalTracker.Strike st, int turn, BlockPos block, double ground,
-                              boolean climb, Vec3 cam, float fade) {
+                              Vec3 cam, float fade) {
         if (st.gone().contains(block.asLong())) {
             return;
         }
@@ -543,7 +543,7 @@ final class DecalRenderer {
                     continue; // on the cell's edge: a wall between columns, or against the next block
                 }
                 Direction across = across(face);
-                float a0 = low(box, across), a1 = high(box, across), b0 = (float) box.minY, b1 = (float) box.maxY;
+                float a0 = low(box, across), a1 = high(box, across);
                 // The face's two ends on the ground, from the strike point
                 double[] ends = new double[4];
                 for (int e = 0; e < 2; e++) {
@@ -558,29 +558,30 @@ final class DecalRenderer {
                     continue;
                 }
                 // Out of the face when it looks away from the strike, into it when it looks toward it
-                double middle = (ends[0] + ends[2]) / 2 * face.getStepX() + (ends[1] + ends[3]) / 2 * face.getStepZ();
-                int away = middle < 0 ? -1 : 1;
+                double mx = (ends[0] + ends[2]) / 2, mz = (ends[1] + ends[3]) / 2;
+                int away = mx * face.getStepX() + mz * face.getStepZ() < 0 ? -1 : 1;
                 double dx = face.getStepX() * away, dz = face.getStepZ() * away;
-                if (climb) {
-                    b1 = (float) Math.min(b1, ground - block.getY() + (edge - far));
-                    if (b1 <= b0) {
-                        continue;
-                    }
-                }
+                double climb = Math.min(1, Math.hypot(mx, mz) / SCORCH_HALF); // texels further out per pixel up
                 int color = OverlayRenderer.argb(fade, 0xFFFFFF, OverlayRenderer.lit ? 1 : faceShade(face));
-                for (FloatArrayList out : (fused(level, block) ? SAND : SOIL)[variant]) {
-                    for (int c = 0; c < 4; c++) {
-                        int e = c == 1 || c == 2 ? 1 : 0;
-                        float b = c >= 2 ? b1 : b0;
-                        // Climbing, a pixel row's edges fall on texel edges; standing still, half a texel in keeps
-                        // off the texel edge the face lies on
-                        double step = climb ? Math.abs(block.getY() + b - ground) : 0.5 / 16;
-                        double qx = ends[e * 2] + dx * step, qz = ends[e * 2 + 1] + dz * step;
-                        vertex(out, block, face, plane, e == 0 ? a0 : a1, b, cam, SCORCH_LIFT,
-                                markTex(turn, qx, qz, SCORCH_HALF + 1, false), markTex(turn, qx, qz, SCORCH_HALF + 1, true),
-                                color);
+                FloatArrayList[] outs = (fused(level, block) ? SAND : SOIL)[variant];
+                int rows = (int) Math.round((box.maxY - box.minY) * 16);
+                for (int r = 0; r < rows; r++) {
+                    float b0 = (float) (box.minY + r / 16.0), b1 = b0 + 1 / 16f;
+                    int out = (int) (climb * Math.abs(block.getY() + (b0 + b1) / 2 - ground) * 16);
+                    double step = (out + 0.5) / 16; // the middle of a texel: the face itself lies on a texel edge
+                    if (far + step >= edge) {
+                        break;
                     }
-                    end(out, face, light);
+                    for (FloatArrayList list : outs) {
+                        for (int c = 0; c < 4; c++) {
+                            int e = c == 1 || c == 2 ? 1 : 0;
+                            double qx = ends[e * 2] + dx * step, qz = ends[e * 2 + 1] + dz * step;
+                            vertex(list, block, face, plane, e == 0 ? a0 : a1, c >= 2 ? b1 : b0, cam, SCORCH_LIFT,
+                                    markTex(turn, qx, qz, SCORCH_HALF + 1, false),
+                                    markTex(turn, qx, qz, SCORCH_HALF + 1, true), color);
+                        }
+                        end(list, face, light);
+                    }
                 }
             }
         }
