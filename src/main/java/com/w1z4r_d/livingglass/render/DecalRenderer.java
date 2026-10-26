@@ -77,8 +77,9 @@ final class DecalRenderer {
         }
     }
 
-    /** Block models' quads by state, for marks on posts and fences (see model). */
+    /** Block models' quads by state, for marks on posts and fences (see model), and which states are posts (thin). */
     private static final Map<BlockState, List<float[]>> MODELS = new IdentityHashMap<>();
+    private static final Map<BlockState, Boolean> FOOTPRINTS = new IdentityHashMap<>();
     /** Wall faces a burn mark has been drawn on this frame. */
     private static final Set<DecalTracker.Key> WALLS_TAKEN = new HashSet<>();
     /** A splat fades out over the last quarter of its life. */
@@ -358,7 +359,8 @@ final class DecalRenderer {
                         }
                         BlockPos block = new BlockPos(ground.getX() + dx, groundY + k, ground.getZ() + dz);
                         // A post, fence or lantern goes by its model where it has one
-                        List<float[]> model = k == 0 ? List.of() : model(level.getBlockState(block));
+                        BlockState state = level.getBlockState(block);
+                        List<float[]> model = thin(level, block, state) ? model(state) : List.of();
                         if (!model.isEmpty()) {
                             modelMarks(level, variant, st, turn, block, surface[i], model, ca, cb, glow, cam, fade);
                             continue;
@@ -621,12 +623,7 @@ final class DecalRenderer {
         int light = OverlayRenderer.packedLight(level, block);
         for (float[] q : model) {
             Direction face = Direction.values()[(int) q[0]];
-            AABB box = new AABB(Math.min(Math.min(q[1], q[4]), Math.min(q[7], q[10])),
-                    Math.min(Math.min(q[2], q[5]), Math.min(q[8], q[11])),
-                    Math.min(Math.min(q[3], q[6]), Math.min(q[9], q[12])),
-                    Math.max(Math.max(q[1], q[4]), Math.max(q[7], q[10])),
-                    Math.max(Math.max(q[2], q[5]), Math.max(q[8], q[11])),
-                    Math.max(Math.max(q[3], q[6]), Math.max(q[9], q[12])));
+            AABB box = quadBox(q);
             Direction.Axis axis = face.getAxis();
             double plane = face.getAxisDirection() == Direction.AxisDirection.POSITIVE ? box.max(axis) : box.min(axis);
             if (face == Direction.DOWN || box.max(axis) - box.min(axis) > 1.0e-3
@@ -635,6 +632,10 @@ final class DecalRenderer {
             }
             if (face == Direction.UP) {
                 float[] rect = {low(box, across(face)), high(box, across(face)), low(box, up(face)), high(box, up(face))};
+                if (rect[1] <= ca - SCORCH_HALF || rect[0] >= ca + SCORCH_HALF || rect[3] <= cb - SCORCH_HALF
+                        || rect[2] >= cb + SCORCH_HALF) {
+                    continue; // past the mark, where its texture would wrap round
+                }
                 for (FloatArrayList out : (fused(level, block) ? SAND : SOIL)[variant]) {
                     rectQuad(out, block, face, plane, rect, ca, cb, SCORCH_HALF, turn, SCORCH_LIFT, tint(out, fade, face),
                             light, cam);
@@ -648,6 +649,24 @@ final class DecalRenderer {
                         box.minY, box.maxY, cam, fade, light);
             }
         }
+    }
+
+    /** Whether block is a post, fence, wall or lantern rather than ground: it does not cover its whole cell. */
+    private static boolean thin(Level level, BlockPos block, BlockState state) {
+        if (FOOTPRINTS.size() > 512) {
+            FOOTPRINTS.clear();
+        }
+        return !FOOTPRINTS.computeIfAbsent(state, s -> DecalTracker.fullFootprint(level, block));
+    }
+
+    /** The flat box round a model quad {direction, then x, y, z of four corners}. */
+    private static AABB quadBox(float[] q) {
+        return new AABB(Math.min(Math.min(q[1], q[4]), Math.min(q[7], q[10])),
+                Math.min(Math.min(q[2], q[5]), Math.min(q[8], q[11])),
+                Math.min(Math.min(q[3], q[6]), Math.min(q[9], q[12])),
+                Math.max(Math.max(q[1], q[4]), Math.max(q[7], q[10])),
+                Math.max(Math.max(q[2], q[5]), Math.max(q[8], q[11])),
+                Math.max(Math.max(q[3], q[6]), Math.max(q[9], q[12])));
     }
 
     /** The quads of state's block model (see Compat.modelQuads), looked up once per state. */
@@ -767,6 +786,19 @@ final class DecalRenderer {
         Direction.Axis axis = face.getAxis();
         boolean positive = face.getAxisDirection() == Direction.AxisDirection.POSITIVE;
         Direction t1 = across(face), t2 = up(face);
+        // A fence or wall's outline is not what is seen (its arms are solid between the rails): go by its model
+        List<float[]> model = thin(level, block, state) ? model(state) : List.of();
+        for (float[] q : model) {
+            AABB box = quadBox(q);
+            double side = positive ? box.max(axis) : box.min(axis);
+            if (q[0] == face.ordinal() && box.max(axis) - box.min(axis) <= 1.0e-3 && Math.abs(side - surface) <= 1.0e-3
+                    && !(atBoundary(face, surface) && pressed(level, block, face, box))) {
+                rects.add(new float[] {low(box, t1), high(box, t1), low(box, t2), high(box, t2)});
+            }
+        }
+        if (!model.isEmpty()) {
+            return rects;
+        }
         for (AABB box : state.getShape(level, block).toAabbs()) {
             double side = positive ? box.max(axis) : box.min(axis);
             if (Math.abs(side - surface) <= 1.0e-3 && !(atBoundary(face, surface) && pressed(level, block, face, box))) {

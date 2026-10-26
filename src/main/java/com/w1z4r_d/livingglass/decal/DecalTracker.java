@@ -4,7 +4,6 @@ import com.w1z4r_d.livingglass.LivingGlassConfig;
 import com.w1z4r_d.livingglass.compat.Compat;
 import com.w1z4r_d.livingglass.glass.GlassTracker;
 import com.w1z4r_d.livingglass.glass.Melt;
-import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
@@ -12,6 +11,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BaseFireBlock;
@@ -40,7 +40,6 @@ public final class DecalTracker {
     private static final int TARGET_INTERVAL_TICKS = 10;
     private static final int MAX_SPLATS = 256;
     private static final int MAX_STRIKES = 32;
-    private static final double SNOWBALL_RANGE = 64;
     private static final Direction[] FIRE_SIDES = {Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST, Direction.UP};
     /** How many columns a burn mark reaches either way from the struck one: four blocks across round any point of it. */
     public static final int STRIKE_REACH = 3;
@@ -103,9 +102,6 @@ public final class DecalTracker {
     /** Lightning bolts already turned into a strike, so each leaves one mark. */
     private final IntOpenHashSet seenBolts = new IntOpenHashSet();
     private final IntOpenHashSet boltsNow = new IntOpenHashSet();
-    /** Last two positions of every snowball in range, to find where it hit once it is gone. */
-    private final Int2ObjectOpenHashMap<Vec3[]> snowballs = new Int2ObjectOpenHashMap<>();
-    private final IntOpenHashSet alive = new IntOpenHashSet();
     private Level level;
     private long tick;
 
@@ -168,7 +164,6 @@ public final class DecalTracker {
             fires.clear();
             ash.clear();
             splats.clear();
-            snowballs.clear();
             strikes.clear();
             seenBolts.clear();
             level = mc.level;
@@ -178,9 +173,6 @@ public final class DecalTracker {
             return;
         }
         tick++;
-        if (cfg.snowballs.enabled) {
-            trackSnowballs(mc.player.position());
-        }
         long life = (long) (cfg.timing.snowSeconds * 20);
         splats.removeIf(s -> tick - s.born > life);
         if (cfg.lightning.enabled) {
@@ -349,8 +341,12 @@ public final class DecalTracker {
         return (int) Math.ceil(surface - 1.0e-6) - 1;
     }
 
-    /** Whether block's shape covers its whole cell seen from above, so it is ground, not a post standing on it. */
     private boolean fullFootprint(BlockPos block) {
+        return fullFootprint(level, block);
+    }
+
+    /** Whether block's shape covers its whole cell seen from above, so it is ground, not a post standing on it. */
+    public static boolean fullFootprint(Level level, BlockPos block) {
         boolean[] covered = new boolean[256];
         int count = 0;
         for (AABB box : level.getBlockState(block).getShape(level, block).toAabbs()) {
@@ -385,53 +381,46 @@ public final class DecalTracker {
         return shape.isEmpty() ? 0 : shape.max(Direction.Axis.Y);
     }
 
-    private void trackSnowballs(Vec3 player) {
-        alive.clear();
-        double range = SNOWBALL_RANGE * SNOWBALL_RANGE;
-        for (Entity e : ((net.minecraft.client.multiplayer.ClientLevel) level).entitiesForRendering()) {
-            if (!Compat.isSnowball(e) || e.position().distanceToSqr(player) > range) {
-                continue;
-            }
-            alive.add(e.getId());
-            Vec3[] last = snowballs.get(e.getId());
-            Vec3 earlier = last == null ? e.position().subtract(e.getDeltaMovement()) : last[1];
-            snowballs.put(e.getId(), new Vec3[] {earlier, e.position(), e.getDeltaMovement()});
-        }
-        var it = snowballs.int2ObjectEntrySet().iterator();
-        while (it.hasNext()) {
-            var entry = it.next();
-            if (!alive.contains(entry.getIntKey())) {
-                impact(entry.getValue());
-                it.remove();
-            }
-        }
-    }
-
-    /** A snowball vanished: find the block face it was flying into, unless it hit a mob or player first. */
-    private void impact(Vec3[] track) {
-        Vec3 from = track[0];
-        Vec3 velocity = track[2];
-        if (velocity.lengthSqr() < 1.0e-4) {
+    /**
+     * A snowball broke on something (the server says so): leave a splat on the block face it flew into, unless it hit
+     * a mob or player on the way. The ray runs back over its last tick of flight and on past where it is now, as the
+     * server saw the hit a little before this client did; it meets blocks the way the snowball does, so grass and
+     * flowers it flies through do not catch it, and a splat on the ground under a snow layer goes on the snow.
+     */
+    public void snowballHit(Entity snowball) {
+        LivingGlassConfig cfg = LivingGlassConfig.get();
+        Vec3 velocity = snowball.getDeltaMovement();
+        if (level == null || !cfg.enabled || !cfg.snowballs.enabled || velocity.lengthSqr() < 1.0e-4) {
             return;
         }
-        Vec3 to = track[1].add(velocity.scale(1.5)).add(velocity.normalize().scale(0.6));
-        BlockHitResult hit = level.clip(new ClipContext(from, to, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE,
+        Vec3 from = snowball.position().subtract(velocity);
+        Vec3 to = snowball.position().add(velocity.scale(1.5)).add(velocity.normalize().scale(0.6));
+        BlockHitResult hit = level.clip(new ClipContext(from, to, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE,
                 CollisionContext.empty()));
-        if (hit.getType() != HitResult.Type.BLOCK) {
+        if (hit.getType() != HitResult.Type.BLOCK || hit.isInside()) {
             return;
         }
         Vec3 at = hit.getLocation();
-        for (Entity e : level.getEntities((Entity) null, new AABB(from, at).inflate(0.5),
-                e -> e.isPickable() && !Compat.isSnowball(e))) {
+        Entity owner = snowball instanceof Projectile projectile ? projectile.getOwner() : null;
+        for (Entity e : level.getEntities(snowball, new AABB(from, at).inflate(0.5),
+                e -> e.isPickable() && e != owner && !Compat.isSnowball(e))) {
             if (e.getBoundingBox().inflate(0.3).clip(from, at).isPresent()) {
                 return; // it hit someone, not the wall behind them
             }
         }
         BlockPos pos = hit.getBlockPos();
+        Direction face = hit.getDirection();
+        BlockPos above = pos.above();
+        BlockState layer = level.getBlockState(above);
+        if (face == Direction.UP && layer.getBlock() instanceof SnowLayerBlock) {
+            // A thin snow layer has no collision of its own, so the snowball went through it to the ground
+            pos = above;
+            at = new Vec3(at.x, above.getY() + layer.getShape(level, above).max(Direction.Axis.Y), at.z);
+        }
         if (splats.size() >= MAX_SPLATS) {
             splats.remove(0);
         }
-        splats.add(new Splat(pos.asLong(), hit.getDirection(), at.x - pos.getX(), at.y - pos.getY(), at.z - pos.getZ(),
+        splats.add(new Splat(pos.asLong(), face, at.x - pos.getX(), at.y - pos.getY(), at.z - pos.getZ(),
                 (int) (tick * 0x9E3779B9L ^ pos.asLong()), tick, new LongOpenHashSet()));
     }
 

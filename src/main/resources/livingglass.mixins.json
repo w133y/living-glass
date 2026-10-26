@@ -3,7 +3,8 @@
   "package": "com.w1z4r_d.livingglass.mixin",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "ClientLevelMixin"
+    "ClientLevelMixin",
+    "ClientPacketListenerMixin"
   ],
   "injectors": {
     "defaultRequire": 1
