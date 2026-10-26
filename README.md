@@ -17,7 +17,7 @@ No new blocks and no server install. Works on any server.
 - **Outside ice:** during snowfall, feathery frost grows on the outside of the window from a little bank of snow at the bottom.
 - **Ash:** fire leaves a black scorch on the block it burns on and soot on the blocks around it, which fades after the fire is out.
 - **Snowball marks:** a thrown snowball leaves a splat wherever it hits for about 20 seconds.
-- **Lightning scorch:** a strike leaves a burn mark with glowing embers on the ground around it, fading after a few minutes.
+- **Lightning scorch:** a strike leaves a burn mark with glowing embers on the ground around it, fading after a few minutes. On sand it melts into glass.
 - **Raindrops:** drops run down glass exposed to rain and land on its top. Glass under a roof stays dry.
 - **Breath:** stand right at a cold window and your breath leaves a patch.
 - **Wipe:** right-click the glass with an empty hand to clear a spot. It slowly fogs up again.
