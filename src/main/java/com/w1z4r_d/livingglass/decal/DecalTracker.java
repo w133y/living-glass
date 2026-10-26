@@ -10,6 +10,7 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.level.ClipContext;
@@ -96,6 +97,11 @@ public final class DecalTracker {
                          LongOpenHashSet gone) {
     }
 
+    /** What each dimension's marks were when the player went to another, kept a while for coming back. */
+    private record Stash(long at, Map<Key, Ash> ash, List<Splat> splats, List<Strike> strikes) {
+    }
+
+    private final Map<ResourceKey<Level>, Stash> stashed = new HashMap<>();
     private final LongOpenHashSet fires = new LongOpenHashSet();
     private final Map<Key, Ash> ash = new HashMap<>();
     private final List<Splat> splats = new ArrayList<>();
@@ -162,12 +168,24 @@ public final class DecalTracker {
 
     public void tick(Minecraft mc) {
         if (mc.level != level) {
+            if (mc.level == null) {
+                stashed.clear(); // left the world: another one may have blocks at the same places
+            } else if (level != null) {
+                stashed.put(level.dimension(), new Stash(System.nanoTime(), new HashMap<>(ash), new ArrayList<>(splats),
+                        new ArrayList<>(strikes)));
+            }
             fires.clear();
             ash.clear();
             splats.clear();
             strikes.clear();
             seenBolts.clear();
             level = mc.level;
+            Stash back = level == null ? null : stashed.remove(level.dimension());
+            if (back != null && System.nanoTime() - back.at() <= GlassTracker.KEEP_NANOS) {
+                ash.putAll(back.ash());
+                splats.addAll(back.splats());
+                strikes.addAll(back.strikes());
+            }
         }
         LivingGlassConfig cfg = LivingGlassConfig.get();
         if (level == null || mc.player == null || !cfg.enabled) {

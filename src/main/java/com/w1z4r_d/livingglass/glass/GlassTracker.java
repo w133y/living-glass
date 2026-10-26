@@ -11,6 +11,7 @@ import it.unimi.dsi.fastutil.objects.ObjectIterator;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.tags.TagKey;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
@@ -27,6 +28,9 @@ import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.VoxelShape;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /** Finds windows around the player and eases their effect values toward climate targets. */
 public final class GlassTracker {
@@ -52,6 +56,14 @@ public final class GlassTracker {
     private static final double BREATH_MIN_COLD = 0.2;
 
     private final Long2ObjectOpenHashMap<GlassState> states = new Long2ObjectOpenHashMap<>();
+    /** How long a window keeps its fog, frost and ice after the player leaves it behind. */
+    public static final long KEEP_NANOS = 5 * 60 * 1_000_000_000L;
+    /**
+     * Windows dropped because the player went away (out of range, chunk unloaded, another dimension), per dimension,
+     * so they look the same on coming back within KEEP_NANOS instead of starting again from clear glass.
+     */
+    private final Map<ResourceKey<Level>, Long2ObjectOpenHashMap<GlassState>> parkedByDimension = new HashMap<>();
+    private Long2ObjectOpenHashMap<GlassState> parked = new Long2ObjectOpenHashMap<>();
     private final Climate climate = new Climate();
     private final LongArrayFIFOQueue pending = new LongArrayFIFOQueue();
     private final LongOpenHashSet pendingSet = new LongOpenHashSet();
@@ -103,8 +115,15 @@ public final class GlassTracker {
 
     public void tick(Minecraft mc) {
         if (mc.level != level) {
+            if (mc.level == null) {
+                parkedByDimension.clear(); // left the world: another one may have glass at the same places
+            } else if (level != null) {
+                states.values().forEach(this::park);
+            }
             clear();
             level = mc.level;
+            parked = level == null ? new Long2ObjectOpenHashMap<>()
+                    : parkedByDimension.computeIfAbsent(level.dimension(), k -> new Long2ObjectOpenHashMap<>());
         }
         LivingGlassConfig cfg = LivingGlassConfig.get();
         if (level == null || mc.player == null || !cfg.enabled) {
@@ -125,6 +144,10 @@ public final class GlassTracker {
         }
         sweep(mc.player.blockPosition(), cfg.scan.radius, budget, p);
         update(mc.player.blockPosition(), cfg);
+        if (tick % 200 == 0) {
+            long now = System.nanoTime();
+            parked.values().removeIf(gs -> now - gs.parkedAt > KEEP_NANOS);
+        }
 
         tickNanos = tickNanos * 0.95 + (System.nanoTime() - start) * 0.05;
     }
@@ -159,26 +182,44 @@ public final class GlassTracker {
     private void refresh(BlockPos pos) {
         long key = pos.asLong();
         if (!level.isLoaded(pos)) {
-            states.remove(key);
+            GlassState left = states.remove(key);
+            if (left != null) {
+                park(left);
+            }
             return;
         }
         BlockState state = level.getBlockState(pos);
         DecalTracker.INSTANCE.onBlock(pos, state);
         if (!isGlass(state)) {
             states.remove(key);
+            parked.remove(key);
             return;
         }
         GlassState gs = states.get(key);
+        boolean back = false;
         if (gs == null) {
-            gs = new GlassState(key);
+            // A window the player comes back to looks as it did when they left
+            gs = parked.remove(key);
+            back = gs != null && System.nanoTime() - gs.parkedAt <= KEEP_NANOS;
+            if (back) {
+                gs.renderTime = -1;
+            } else {
+                gs = new GlassState(key);
+            }
         }
         if (!classify(pos, state, gs)) {
             states.remove(key);
             return;
         }
-        if (!states.containsKey(key) && makeRoom(key)) {
-            inheritFromWindow(pos, gs);
-            states.put(key, gs);
+        if (!states.containsKey(key)) {
+            if (makeRoom(key)) {
+                if (!back) {
+                    inheritFromWindow(pos, gs);
+                }
+                states.put(key, gs);
+            } else if (back) {
+                park(gs);
+            }
         }
     }
 
@@ -223,8 +264,14 @@ public final class GlassTracker {
         if (farthest == key) {
             return false;
         }
-        states.remove(farthest);
+        park(states.remove(farthest));
         return true;
+    }
+
+    /** Keeps a window the player left behind for a while (see KEEP_NANOS). */
+    private void park(GlassState gs) {
+        gs.parkedAt = System.nanoTime();
+        parked.put(gs.pos, gs);
     }
 
     private static long distSq(long packed, BlockPos to) {
@@ -421,6 +468,7 @@ public final class GlassTracker {
             if (Math.floorMod(tick + gs.seed, TARGET_INTERVAL_TICKS) == 0) {
                 p.set(gs.pos);
                 if (p.distSqr(player) > keep || !level.isLoaded(p)) {
+                    park(gs);
                     it.remove();
                     continue;
                 }

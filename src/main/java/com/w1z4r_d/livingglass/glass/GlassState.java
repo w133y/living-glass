@@ -39,6 +39,8 @@ public final class GlassState {
     public int tint;
 
     public float fog, frost, drops, ice;
+    /** When the player left this window behind (System.nanoTime), so it can be restored if they come back soon. */
+    public long parkedAt;
     public float fogTarget, frostTarget, dropTarget, iceTarget;
 
     // Last climate inputs, shown in the debug HUD; NaN until the first climate update
