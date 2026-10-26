@@ -179,6 +179,8 @@ for variant, (heart, rings, noise, stretch, arms_range, length_range, width, for
         if stretch > 1.2:  # a long mark cracks mostly along its length
             a = tilt + (0 if i % 2 == 0 else math.pi) + rnd.uniform(-0.6, 0.6)
         crack(31.5 + math.cos(a) * heart * 0.8, 31.5 + math.sin(a) * heart * 0.8, a, rnd.randint(*length_range), width, 2)
+        for i in range(int(heart * 0.8) + 1):  # its line in from the heart, for the veins that reach the small glass pool
+            spine.add((int(round(31.5 + math.cos(a) * i)), int(round(31.5 + math.sin(a) * i))))
     for _ in range(specks):  # burnt bits thrown clear of the mark
         a, d = rnd.uniform(0, 2 * math.pi), rnd.uniform(edges[3] + 2, 29)
         sx, sy = int(31.5 + math.cos(a) * d), int(31.5 + math.sin(a) * d)
@@ -202,7 +204,8 @@ for variant, (heart, rings, noise, stretch, arms_range, length_range, width, for
     # The same mark melted into glass: the heart a glass pool shaded like a vanilla pane (lit from the top left, a
     # bright rim there and a dark thick one opposite, short diagonal glints), the cracks thin veins, and a one-pixel
     # rim of sintered sand round the pool
-    pool = {(x, y) for y in range(L) for x in range(L) if mark[y][x] == 3}
+    # A small pool in the middle of the heart, about half its size
+    pool = {(x, y) for y in range(L) for x in range(L) if radius(x, y) + burn[y][x] * 0.4 < max(3.5, heart * 0.5)}
     outside = {(x, y) for y in range(L) for x in range(L)} - pool
 
     def near(x, y, cells):
