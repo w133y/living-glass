@@ -291,9 +291,9 @@ final class DecalRenderer {
         if (r == null) {
             return;
         }
-        // Cells so the corners' alpha blends evenly across the face, not along the diagonal of one quad
+        // Where the corners differ, one cell per pixel, each a pixel of the texture shown whole or not at all
         boolean even = corner[0] == corner[1] && corner[1] == corner[2] && corner[2] == corner[3];
-        int cells = look.melting() ? OverlayRenderer.GRID : even ? 1 : 4;
+        int cells = look.melting() || !even ? OverlayRenderer.GRID : 1;
         float step = 1f / cells;
         for (int i = 0; i < cells; i++) {
             for (int j = 0; j < cells; j++) {
@@ -307,7 +307,8 @@ final class DecalRenderer {
                 float x0 = Math.max(r[0], i * step), x1 = Math.min(r[1], (i + 1) * step);
                 float y0 = Math.max(r[2], j * step), y1 = Math.min(r[3], (j + 1) * step);
                 if (x1 > x0 && y1 > y0) {
-                    rect(out, pos, a.face, a.plane, cam, x0, x1, y0, y1, flipU, flipV, corner, light);
+                    rect(out, pos, a.face, a.plane, cam, x0, x1, y0, y1, flipU, flipV,
+                            even ? OverlayRenderer.argb(corner[0], 0xFFFFFF, 1) : pixel(a, corner, i, j, step), light);
                 }
             }
         }
@@ -912,23 +913,28 @@ final class DecalRenderer {
         return Math.abs(surface - edge) <= 1.0e-3;
     }
 
-    /**
-     * One cell of a face in face coordinates (x across, y up, 0..1), with the whole texture mapped over the face, white
-     * with the alpha of the face's corners (left-bottom, right-bottom, right-top, left-top) blended across it.
-     */
+    /** One cell of a face in face coordinates (x across, y up, 0..1), with the whole texture mapped over the face. */
     private static void rect(FloatArrayList out, BlockPos pos, Direction face, double plane, Vec3 cam,
-                             float x0, float x1, float y0, float y1, boolean flipU, boolean flipV, float[] corner, int light) {
-        vertex(out, pos, face, plane, x0, y0, cam, ASH_LIFT, u(x0, flipU), v(y0, flipV), white(corner, x0, y0));
-        vertex(out, pos, face, plane, x1, y0, cam, ASH_LIFT, u(x1, flipU), v(y0, flipV), white(corner, x1, y0));
-        vertex(out, pos, face, plane, x1, y1, cam, ASH_LIFT, u(x1, flipU), v(y1, flipV), white(corner, x1, y1));
-        vertex(out, pos, face, plane, x0, y1, cam, ASH_LIFT, u(x0, flipU), v(y1, flipV), white(corner, x0, y1));
+                             float x0, float x1, float y0, float y1, boolean flipU, boolean flipV, int color, int light) {
+        vertex(out, pos, face, plane, x0, y0, cam, ASH_LIFT, u(x0, flipU), v(y0, flipV), color);
+        vertex(out, pos, face, plane, x1, y0, cam, ASH_LIFT, u(x1, flipU), v(y0, flipV), color);
+        vertex(out, pos, face, plane, x1, y1, cam, ASH_LIFT, u(x1, flipU), v(y1, flipV), color);
+        vertex(out, pos, face, plane, x0, y1, cam, ASH_LIFT, u(x0, flipU), v(y1, flipV), color);
         end(out, face, light);
     }
 
-    /** White with the corners' alpha blended to (x, y) of the face. */
-    private static int white(float[] corner, float x, float y) {
+    /**
+     * White with the alpha of pixel cell (i, j) of an ash face: the corners' alpha (left-bottom, right-bottom,
+     * right-top, left-top) blended to its middle, give or take a little per pixel where it is neither built up nor
+     * gone, so a patch fading toward a corner ends in a ragged pixel edge rather than a straight one.
+     */
+    private static int pixel(Ash a, float[] corner, int i, int j, float step) {
+        float x = (i + 0.5f) * step, y = (j + 0.5f) * step;
         float bottom = corner[0] + (corner[1] - corner[0]) * x, top = corner[3] + (corner[2] - corner[3]) * x;
-        return OverlayRenderer.argb(bottom + (top - bottom) * y, 0xFFFFFF, 1);
+        float alpha = bottom + (top - bottom) * y;
+        float jitter = ((OverlayRenderer.hash(a.seed + i * 131 + j * 7919 + 17) & 0xFF) / 255f - 0.5f) * 0.4f;
+        alpha += jitter * (1 - Math.abs(2 * alpha - 1));
+        return OverlayRenderer.argb(Math.clamp(alpha, 0f, 1f), 0xFFFFFF, 1);
     }
 
     private static float u(float x, boolean flip) {
