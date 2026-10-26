@@ -16,6 +16,7 @@ import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BaseFireBlock;
 import net.minecraft.world.level.block.FireBlock;
+import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.SnowLayerBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BooleanProperty;
@@ -84,8 +85,9 @@ public final class DecalTracker {
     /**
      * A lightning strike: the ground block it hit, the strike point in world coordinates (x, z on the pixel grid) and
      * the ground around it as it was then, so the mark keeps to those blocks: for each column the y of the block whose
-     * top carries the mark and the height of that top (NaN where there is none). Blocks changed since are in gone and
-     * lose their part of the mark; the ground a broken block uncovers stays clean.
+     * top carries the mark and the height of that top; +infinity where the ground rises past the mark's reach and
+     * -infinity where it drops away below it, so the mark only climbs or runs down the side there; NaN under water.
+     * Blocks changed since are in gone and lose their part of the mark; the ground a broken block uncovers stays clean.
      */
     public record Strike(long ground, double x, double z, int seed, long born, int[] top, double[] surface,
                          LongOpenHashSet gone) {
@@ -290,11 +292,23 @@ public final class DecalTracker {
                 surface[i] = Double.NaN;
                 for (int dy = 2; dy >= -3; dy--) {
                     BlockPos block = pos.offset(dx, dy, dz);
+                    BlockState state = level.getBlockState(block);
+                    if (state.getBlock() instanceof LiquidBlock) {
+                        break;
+                    }
                     double height = groundHeight(block);
                     if (height > 0) {
                         top[i] = block.getY();
                         surface[i] = block.getY() + height;
                         break;
+                    }
+                    if (dy == 2 && !state.getCollisionShape(level, block).isEmpty()) {
+                        top[i] = block.getY(); // solid and buried: a hill or wall going on up
+                        surface[i] = Double.POSITIVE_INFINITY;
+                        break;
+                    }
+                    if (dy == -3) {
+                        surface[i] = Double.NEGATIVE_INFINITY;
                     }
                 }
             }

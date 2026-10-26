@@ -6,8 +6,12 @@ ash_full_{variant}_{mask}: scorch under or behind a fire, covering nearly the wh
 ash_side_{variant}_{mask}: soot on a block next to a fire, from the bottom up to about half the face. Only the
 left/right bits are used; the top always fades out.
 snow_{variant}: a 10x10 snowball splat (10/16 of a block).
-lightning_scorch_{variant}: a 64x64 burn mark spanning 4x4 blocks where lightning struck.
+lightning_scorch_{variant}: a 64x64 burn mark spanning 4x4 blocks where lightning struck, in LIGHTNING_VARIANTS
+styles that differ in size, shape and cracks.
 lightning_embers_{variant}: the glowing cinders drawn over it while it is fresh.
+Splats and burn marks sit in the middle of a sheet with a clear margin one block wide, so a block face the mark only
+touches can take the sheet over the whole face: marks that overlap on a face then share their quads and blend
+instead of flickering.
 """
 import math
 import os
@@ -90,9 +94,9 @@ for variant in range(VARIANTS):
         img.save(f"{out}/ash_side_{variant}_{mask}.png")
 
     # Snowball splat, 10x10: a chunky lump, lit from the top left, with a few bits thrown off
-    N = 10
+    N, M = 10, 16
     lump = smooth(rnd, N, 2, 1.2)
-    img = Image.new("RGBA", (N, N), (0, 0, 0, 0))
+    img = Image.new("RGBA", (N + 2 * M, N + 2 * M), (0, 0, 0, 0))
     for y in range(N):
         for x in range(N):
             r = math.hypot(x - 4.5, y - 4.5) + lump[y][x]
@@ -100,48 +104,81 @@ for variant in range(VARIANTS):
                 shade = 0 if x + y < 7 else 1 if x + y < 11 else 2
                 if r > 2.8 and x + y > 9:
                     shade = 3  # shadowed rim at the bottom right
-                img.putpixel((x, y), SNOW[shade])
+                img.putpixel((x + M, y + M), SNOW[shade])
     for x, y in ((rnd.randrange(N), 0), (0, rnd.randrange(N)), (N - 1, rnd.randrange(2, N)), (rnd.randrange(2, N), N - 1)):
         if math.hypot(x - 4.5, y - 4.5) > 4:
-            img.putpixel((x, y), SNOW[1])
+            img.putpixel((x + M, y + M), SNOW[1])
     img.save(f"{out}/snow_{variant}.png")
 
-    # Lightning scorch, 64x64 over 4x4 blocks: a charred heart fading out in steps, a few forked cracks
-    L = 64
-    burn = smooth(rnd, L, 5, 2.5)
+# Lightning scorch, 64x64 over 4x4 blocks: a charred heart fading out in steps, forked cracks, burnt specks
+LIGHTNING_VARIANTS = 6
+STYLES = [
+    # heart radius, ring widths outward, blob noise, stretch, cracks, crack length, crack width, fork chance, specks
+    (9, (4, 4, 3), 2.5, 1.0, (4, 6), (14, 20), 1, 0.06, 0),
+    (6, (3, 3, 3), 1.5, 1.0, (6, 7), (16, 24), 0, 0.10, 6),
+    (11, (3, 4, 3), 4.0, 1.0, (3, 3), (8, 12), 1, 0.0, 3),
+    (8, (4, 3, 3), 2.0, 1.6, (2, 3), (16, 22), 1, 0.08, 8),
+    (7, (3, 2, 2), 1.5, 1.0, (8, 10), (8, 14), 0, 0.0, 4),
+    (9, (3, 4, 4), 3.0, 1.25, (4, 5), (12, 18), 1, 0.12, 5),
+]
+assert len(STYLES) == LIGHTNING_VARIANTS
+L, M = 64, 16
+for variant, (heart, rings, noise, stretch, arms_range, length_range, width, fork, specks) in enumerate(STYLES):
+    rnd = random.Random(31 + variant * 977)
+    burn = smooth(rnd, L, 5, noise)
+    tilt = rnd.uniform(0, math.pi)
+    k = math.sqrt(stretch)
+    edges = [heart, heart + rings[0], heart + rings[0] + rings[1], heart + sum(rings)]
+
+    def radius(x, y):
+        """Distance from the middle in the mark's own stretched shape."""
+        dx, dy = x - 31.5, y - 31.5
+        along = dx * math.cos(tilt) + dy * math.sin(tilt)
+        side = -dx * math.sin(tilt) + dy * math.cos(tilt)
+        return math.hypot(along / k, side * k)
+
     mark = [[-1] * L for _ in range(L)]
     for y in range(L):
         for x in range(L):
-            r = math.hypot(x - 31.5, y - 31.5) + burn[y][x]
-            mark[y][x] = 3 if r < 9 else 2 if r < 13 else 1 if r < 17 else 0 if r < 20 else -1
+            r = radius(x, y) + burn[y][x]
+            mark[y][x] = 3 if r < edges[0] else 2 if r < edges[1] else 1 if r < edges[2] else 0 if r < edges[3] else -1
 
-    def crack(x, y, angle, length, width, level):
+    def crack(x, y, angle, length, w, level):
         for _ in range(length):
             angle += rnd.uniform(-0.35, 0.35)
             x += math.cos(angle)
             y += math.sin(angle)
-            for wx in range(-width, width + 1):
-                for wy in range(-width, width + 1):
+            for wx in range(-w, w + 1):
+                for wy in range(-w, w + 1):
                     px, py = int(round(x)) + wx, int(round(y)) + wy
                     if 0 <= px < L and 0 <= py < L:
                         mark[py][px] = max(mark[py][px], level)
-            if rnd.random() < 0.06 and length > 8:
+            if rnd.random() < fork and length > 8:
                 crack(x, y, angle + rnd.choice([-0.8, 0.8]), length // 2, 0, max(1, level - 1))
 
-    arms = rnd.randint(4, 6)
+    arms = rnd.randint(*arms_range)
     for i in range(arms):
         a = (i + rnd.uniform(-0.25, 0.25)) / arms * 2 * math.pi
-        crack(31.5 + math.cos(a) * 10, 31.5 + math.sin(a) * 10, a, rnd.randint(14, 20), 1, 2)
-    img = Image.new("RGBA", (L, L), (0, 0, 0, 0))
-    embers = Image.new("RGBA", (L, L), (0, 0, 0, 0))
+        if stretch > 1.2:  # a long mark cracks mostly along its length
+            a = tilt + (0 if i % 2 == 0 else math.pi) + rnd.uniform(-0.6, 0.6)
+        crack(31.5 + math.cos(a) * heart * 0.8, 31.5 + math.sin(a) * heart * 0.8, a, rnd.randint(*length_range), width, 2)
+    for _ in range(specks):  # burnt bits thrown clear of the mark
+        a, d = rnd.uniform(0, 2 * math.pi), rnd.uniform(edges[3] + 2, 29)
+        sx, sy = int(31.5 + math.cos(a) * d), int(31.5 + math.sin(a) * d)
+        bits = [(sx, sy)] + [(sx + rnd.choice((-1, 0, 1)), sy + rnd.choice((-1, 0, 1))) for _ in range(rnd.randint(0, 2))]
+        for px, py in bits:
+            if 0 <= px < L and 0 <= py < L:
+                mark[py][px] = max(mark[py][px], rnd.choice((1, 2)))
+    img = Image.new("RGBA", (L + 2 * M, L + 2 * M), (0, 0, 0, 0))
+    embers = Image.new("RGBA", (L + 2 * M, L + 2 * M), (0, 0, 0, 0))
     for y in range(L):
         for x in range(L):
             if mark[y][x] >= 0:
-                img.putpixel((x, y), soot_px(mark[y][x]))
-            # Glowing cinders only in the heart, in small clusters
-            r = math.hypot(x - 31.5, y - 31.5)
-            if r < 7.5 and rnd.random() < 0.3:
-                embers.putpixel((x, y), EMBERS[0 if r < 4 else 1 if rnd.random() < 0.6 else 2])
+                img.putpixel((x + M, y + M), soot_px(mark[y][x]))
+            # Glowing cinders only in the heart
+            r = radius(x, y)
+            if r < heart - 1.5 and rnd.random() < 0.3:
+                embers.putpixel((x + M, y + M), EMBERS[0 if r < heart * 0.45 else 1 if rnd.random() < 0.6 else 2])
     img.save(f"{out}/lightning_scorch_{variant}.png")
     embers.save(f"{out}/lightning_embers_{variant}.png")
 print("ok")

@@ -19,7 +19,10 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.VoxelShape;
 
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /** Draws ash and snowball splats on block faces, with the same pixel melt as the glass when ash patches merge. */
 final class DecalRenderer {
@@ -35,17 +38,22 @@ final class DecalRenderer {
      * meet at an outside edge close up with no gap.
      */
     private static final double ASH_LIFT = 0, SCORCH_LIFT = 0.001, SNOW_LIFT = 0.002, EMBER_LIFT = 0.003;
-    /** Snow splat texture is 10 pixels wide, at the same pixel size as the block textures. */
+    /**
+     * A snow splat is 10 pixels wide, at the same pixel size as the block textures, and a lightning scorch 64 pixels,
+     * four blocks across. Their textures carry a clear margin a block wide round the mark (see splatPart).
+     */
     private static final float SPLAT_HALF = 5 / 16f;
-    /** The lightning scorch texture is 64 pixels, four blocks across. */
     private static final float SCORCH_HALF = 2;
+    private static final int LIGHTNING_VARIANTS = 6;
     /** Embers glow for this long after the strike, then only the burn mark is left. */
     private static final int EMBER_TICKS = 200;
-    /** How many pixels a burn mark runs down (or up) the side of a tall step in the ground. */
-    private static final int DRAPE_PX = 12;
+    /** How many pixels a burn mark runs down (or up) the side of a step right at the strike; less further out. */
+    private static final int STREAK_PX = 20;
     private static final Direction[] PAIRS = {Direction.EAST, Direction.SOUTH};
-    private static final FloatArrayList[] scorchLists = lists(VARIANTS);
-    private static final FloatArrayList[] emberLists = lists(VARIANTS);
+    private static final FloatArrayList[] scorchLists = lists(LIGHTNING_VARIANTS);
+    private static final FloatArrayList[] emberLists = lists(LIGHTNING_VARIANTS);
+    /** Wall faces a burn mark has been drawn on this frame. */
+    private static final Set<DecalTracker.Key> WALLS_TAKEN = new HashSet<>();
     /** A splat fades out over the last quarter of its life. */
     private static final float SPLAT_FADE = 0.25f;
     private static final int CACHE_TICKS = 20;
@@ -98,7 +106,11 @@ final class DecalRenderer {
             }
         }
         long scorchLife = (long) (cfg.timing.lightningSeconds * 20);
-        for (DecalTracker.Strike st : decals.strikes()) {
+        // Newest first: where two marks reach the same wall, only the newest is drawn on it
+        WALLS_TAKEN.clear();
+        List<DecalTracker.Strike> strikes = decals.strikes();
+        for (int k = strikes.size() - 1; k >= 0; k--) {
+            DecalTracker.Strike st = strikes.get(k);
             if (BlockPos.of(st.ground()).distToCenterSqr(cam) <= maxDist) {
                 drawStrike(level, st, cam, now - st.born(), scorchLife);
             }
@@ -110,6 +122,8 @@ final class DecalRenderer {
         }
         for (int i = 0; i < VARIANTS; i++) {
             OverlayRenderer.submitDecal(collector, poseStack, "snow_" + i, snowLists[i]);
+        }
+        for (int i = 0; i < LIGHTNING_VARIANTS; i++) {
             OverlayRenderer.submitDecal(collector, poseStack, "lightning_scorch_" + i, scorchLists[i]);
             OverlayRenderer.submitDecal(collector, poseStack, "lightning_embers_" + i, emberLists[i]);
         }
@@ -209,7 +223,7 @@ final class DecalRenderer {
         for (int da = -1; da <= 1; da++) {
             for (int db = -1; db <= 1; db++) {
                 splatPart(level, out, s.gone(), pos.relative(t1, da).relative(t2, db), face, a - da, b - db, surface, cam,
-                        alpha, SPLAT_HALF, false, SNOW_LIFT);
+                        alpha, SPLAT_HALF, 0, false, SNOW_LIFT);
             }
         }
         if (!atBoundary(face, surface)) {
@@ -230,7 +244,7 @@ final class DecalRenderer {
                 folded[axis] = tPositive ? 1 : 0;
                 folded[normal] = surface + (positive ? toEdge : -toEdge);
                 splatPart(level, out, s.gone(), pos, t, coord(across(t), folded), coord(up(t), folded), tPositive ? 1 : 0, cam,
-                        alpha, SPLAT_HALF, false, SNOW_LIFT);
+                        alpha, SPLAT_HALF, 0, false, SNOW_LIFT);
             } else {
                 // Inside corner: the wall goes on, and a block in front of it stands out; climb its side face
                 BlockPos corner = side.relative(face);
@@ -238,7 +252,7 @@ final class DecalRenderer {
                 folded[axis] = tPositive ? 0 : 1;
                 folded[normal] = (positive ? 0 : 1) - (positive ? toEdge : -toEdge);
                 splatPart(level, out, s.gone(), corner, back, coord(across(back), folded), coord(up(back), folded),
-                        tPositive ? 0 : 1, cam, alpha, SPLAT_HALF, false, SNOW_LIFT);
+                        tPositive ? 0 : 1, cam, alpha, SPLAT_HALF, 0, false, SNOW_LIFT);
             }
         }
     }
@@ -246,7 +260,7 @@ final class DecalRenderer {
     /**
      * A lightning burn mark projected from above onto the ground as it was at the strike: each column's part on its
      * top face then, and where neighbouring columns differ in height, on the side face of the step between them.
-     * Embers glow on the top faces while the mark is fresh.
+     * Embers glow on the top faces while the mark is fresh. Each strike turns and mirrors its texture its own way.
      */
     private static void drawStrike(Level level, DecalTracker.Strike st, Vec3 cam, long age, long life) {
         if (age >= life) {
@@ -255,7 +269,8 @@ final class DecalRenderer {
         float fade = 0.9f * (age < life * 2 / 3 ? 1 : (life - age) / (life / 3f));
         float glow = age < EMBER_TICKS ? 1 - age / (float) EMBER_TICKS : 0;
         BlockPos ground = BlockPos.of(st.ground());
-        int variant = Math.floorMod(st.seed(), VARIANTS);
+        int style = OverlayRenderer.hash(st.seed());
+        int variant = Math.floorMod(style, LIGHTNING_VARIANTS), turn = (style >>> 8) & 7;
         int reach = DecalTracker.STRIKE_REACH, size = 2 * reach + 1;
         int[] top = st.top();
         double[] surface = st.surface();
@@ -265,16 +280,18 @@ final class DecalRenderer {
                 if (Double.isNaN(surface[i])) {
                     continue;
                 }
-                BlockPos block = new BlockPos(ground.getX() + dx, top[i], ground.getZ() + dz);
-                // Floor face coordinates: x across, north up
-                float ca = (float) (st.x() - block.getX());
-                float cb = (float) (1 - (st.z() - block.getZ()));
-                double local = surface[i] - top[i];
-                splatPart(level, scorchLists[variant], st.gone(), block, Direction.UP, ca, cb, local, cam, fade, SCORCH_HALF,
-                        false, SCORCH_LIFT);
-                if (glow > 0) {
-                    splatPart(level, emberLists[variant], st.gone(), block, Direction.UP, ca, cb, local, cam, glow, SCORCH_HALF,
-                            true, EMBER_LIFT);
+                if (!Double.isInfinite(surface[i])) {
+                    BlockPos block = new BlockPos(ground.getX() + dx, top[i], ground.getZ() + dz);
+                    // Floor face coordinates: x across, north up
+                    float ca = (float) (st.x() - block.getX());
+                    float cb = (float) (1 - (st.z() - block.getZ()));
+                    double local = surface[i] - top[i];
+                    splatPart(level, scorchLists[variant], st.gone(), block, Direction.UP, ca, cb, local, cam, fade,
+                            SCORCH_HALF, turn, false, SCORCH_LIFT);
+                    if (glow > 0) {
+                        splatPart(level, emberLists[variant], st.gone(), block, Direction.UP, ca, cb, local, cam, glow,
+                                SCORCH_HALF, turn, true, EMBER_LIFT);
+                    }
                 }
                 // Each pair of neighbouring columns once: toward east and toward south
                 for (Direction dir : PAIRS) {
@@ -283,12 +300,13 @@ final class DecalRenderer {
                         continue;
                     }
                     int j = (nx + reach) * size + nz + reach;
-                    if (Double.isNaN(surface[j]) || Math.abs(surface[j] - surface[i]) < 1.0e-3) {
+                    if (Double.isNaN(surface[j]) || (Double.isInfinite(surface[i]) && Double.isInfinite(surface[j]))
+                            || Math.abs(surface[j] - surface[i]) < 1.0e-3) {
                         continue;
                     }
                     boolean here = surface[i] > surface[j];
                     int high = here ? i : j;
-                    drape(level, scorchLists[variant], st, ground.getX() + (here ? dx : nx), top[high],
+                    drape(level, scorchLists[variant], st, turn, ground.getX() + (here ? dx : nx), top[high],
                             ground.getZ() + (here ? dz : nz), here ? dir : dir.getOpposite(), surface[here ? j : i],
                             surface[high], cam, fade);
                 }
@@ -299,9 +317,12 @@ final class DecalRenderer {
     /**
      * Scorch on the side face of a step, on the blocks of the higher column (x, z) up to topY: the mark's pixel row
      * along the top edge runs down the face and its row along the foot runs up it, so the burn carries straight on
-     * over both edges. Each pixel column ends raggedly about halfway, or after DRAPE_PX pixels on a tall step.
+     * over both edges. Nearer the strike the soot reaches further, so its ragged end makes an arch rather than a
+     * line, and a low step near the heart is covered whole. A side whose ground lies beyond the strike's snapshot
+     * (an infinite surface: a cliff above, a drop below) sends no streak. Where two marks reach the same wall only
+     * the newest is drawn on it, as their streaks would differ and flicker.
      */
-    private static void drape(Level level, FloatArrayList out, DecalTracker.Strike st, int x, int topY, int z,
+    private static void drape(Level level, FloatArrayList out, DecalTracker.Strike st, int turn, int x, int topY, int z,
                               Direction face, double lowSurface, double highSurface, Vec3 cam, float fade) {
         Direction across = across(face);
         boolean alongX = across.getAxis() == Direction.Axis.X;
@@ -313,83 +334,100 @@ final class DecalRenderer {
         if (Math.abs(fixed - centreFixed) >= SCORCH_HALF) {
             return;
         }
-        // Texture rows just inside the higher ground's edge and just outside it, taken at texel centres
+        boolean topMarked = !Double.isInfinite(highSurface), footMarked = !Double.isInfinite(lowSurface);
+        // Rows of texels just inside the higher ground's edge and just outside it, at texel centres
         double inward = (facePositive ? -0.5 : 0.5) / 16;
-        float rowHigh = tex(fixed + inward - centreFixed), rowLow = tex(fixed - inward - centreFixed);
-        int height = (int) Math.round((highSurface - lowSurface) * 16);
+        double rowHigh = fixed + inward - centreFixed, rowLow = fixed - inward - centreFixed;
+        int height = topMarked && footMarked ? (int) Math.round((highSurface - lowSurface) * 16) : 0;
         int color = OverlayRenderer.argb(fade, 0xFFFFFF, OverlayRenderer.lit ? 1 : faceShade(face));
         double plane = facePositive ? 1 : 0;
         int blockAlong = alongX ? x : z;
-        for (int y = (int) Math.floor(lowSurface + 1.0e-4); y <= topY; y++) {
+        double longest = (STREAK_PX + 2) / 16.0;
+        int from = (int) Math.floor((footMarked ? lowSurface : highSurface - longest) + 1.0e-4);
+        int to = topMarked ? topY : (int) Math.floor(lowSurface + longest);
+        for (int y = from; y <= to; y++) {
             BlockPos block = new BlockPos(x, y, z);
             BlockPos air = block.relative(face);
+            DecalTracker.Key wall = new DecalTracker.Key(block.asLong(), face);
             float[] rect = faceRect(level, block, face, plane);
-            if (rect == null || st.gone().contains(block.asLong()) || level.getBlockState(air).isCollisionShapeFullBlock(level, air)) {
+            if (rect == null || WALLS_TAKEN.contains(wall) || st.gone().contains(block.asLong())
+                    || level.getBlockState(air).isCollisionShapeFullBlock(level, air)) {
                 continue;
             }
             int light = OverlayRenderer.packedLight(level, air);
             float bottom = (float) Math.max(rect[2], lowSurface - y), roof = (float) Math.min(rect[3], highSurface - y);
+            boolean drawn = false;
             for (int k = 0; k < 16; k++) {
-                double along = blockAlong + (k + 0.5) / 16; // centre of this pixel column in the world
+                double offset = blockAlong + (k + 0.5) / 16 - centreAlong; // this pixel column's centre from the strike
                 float a0 = acrossPositive ? k / 16f : 1 - (k + 1) / 16f, a1 = a0 + 1 / 16f;
-                if (Math.abs(along - centreAlong) >= SCORCH_HALF || a0 < rect[0] - 1.0e-4f || a1 > rect[1] + 1.0e-4f) {
+                if (Math.abs(offset) >= SCORCH_HALF || a0 < rect[0] - 1.0e-4f || a1 > rect[1] + 1.0e-4f) {
                     continue;
                 }
-                int bits = OverlayRenderer.hash(st.seed() ^ (int) Math.floor(along * 16) * 0x9E3779B9
+                int bits = OverlayRenderer.hash(st.seed() ^ (int) Math.floor((offset + centreAlong) * 16) * 0x9E3779B9
                         ^ (int) Math.round(fixed * 16) * 0x632BE5AB);
-                int split = height < 2 ? height : Math.clamp(height / 2 + ragged(bits), 1, height - 1);
-                int down = Math.min(split, DRAPE_PX + ragged(bits >>> 8));
-                int up = Math.min(height - split, DRAPE_PX + ragged(bits >>> 16));
-                float column = tex(along - centreAlong);
-                streak(out, block, face, plane, a0, a1, Math.max(bottom, (float) (highSurface - y - down / 16.0)), roof,
-                        alongX ? column : rowHigh, alongX ? rowHigh : column, cam, color, light);
-                streak(out, block, face, plane, a0, a1, bottom, Math.min(roof, (float) (lowSurface - y + up / 16.0)),
-                        alongX ? column : rowLow, alongX ? rowLow : column, cam, color, light);
+                int reach = (int) Math.round(STREAK_PX * (1 - Math.hypot(offset, fixed - centreFixed) / SCORCH_HALF));
+                int down = reach + ragged(bits >>> 8), up = reach + ragged(bits >>> 16);
+                if (height > 0) {
+                    int split = height < 2 ? height : Math.clamp(height / 2 + ragged(bits), 1, height - 1);
+                    down = Math.min(down, split);
+                    up = Math.min(up, height - split);
+                }
+                if (topMarked) {
+                    drawn |= streak(out, block, face, plane, a0, a1, Math.max(bottom, (float) (highSurface - y - down / 16.0)),
+                            roof, texel(turn, alongX, offset, rowHigh, false), texel(turn, alongX, offset, rowHigh, true),
+                            cam, color, light);
+                }
+                if (footMarked) {
+                    drawn |= streak(out, block, face, plane, a0, a1, bottom, Math.min(roof, (float) (lowSurface - y + up / 16.0)),
+                            texel(turn, alongX, offset, rowLow, false), texel(turn, alongX, offset, rowLow, true),
+                            cam, color, light);
+                }
+            }
+            if (drawn) {
+                WALLS_TAKEN.add(wall);
             }
         }
     }
 
     /** One pixel column of a wall from height b0 to b1 in the colour of one texel (u, v) of the scorch texture. */
-    private static void streak(FloatArrayList out, BlockPos block, Direction face, double plane, float a0, float a1,
-                               float b0, float b1, float u, float v, Vec3 cam, int color, int light) {
+    private static boolean streak(FloatArrayList out, BlockPos block, Direction face, double plane, float a0, float a1,
+                                  float b0, float b1, float u, float v, Vec3 cam, int color, int light) {
         if (b1 <= b0) {
-            return;
+            return false;
         }
         vertex(out, block, face, plane, a0, b0, cam, SCORCH_LIFT, u, v, color);
         vertex(out, block, face, plane, a1, b0, cam, SCORCH_LIFT, u, v, color);
         vertex(out, block, face, plane, a1, b1, cam, SCORCH_LIFT, u, v, color);
         vertex(out, block, face, plane, a0, b1, cam, SCORCH_LIFT, u, v, color);
         end(out, face, light);
+        return true;
     }
 
-    /** Scorch texture coordinate of a world offset from the strike point. */
-    private static float tex(double offset) {
-        return (float) ((offset + SCORCH_HALF) / (2 * SCORCH_HALF));
+    /** Scorch texture coordinate of the texel at offset along a wall and row across it from the strike point. */
+    private static float texel(int turn, boolean alongX, double offset, double row, boolean wantV) {
+        return markTex(turn, alongX ? offset : row, alongX ? row : offset, SCORCH_HALF + 1, wantV);
     }
 
-    /** -1, 0 or 1 pixel, from the low bits. */
+    /** -2 to 2 pixels, from the low bits. */
     private static int ragged(int bits) {
-        return Math.floorMod(bits & 0xFF, 3) - 1;
+        return Math.floorMod(bits & 0xFF, 5) - 2;
     }
 
     /**
-     * The part of a splat centred at (ca, cb) in block's face coordinates that lies on the given surface plane of
-     * that block, cut to the parts of the block's shape in that plane. Skipped when nothing is there, the block
-     * changed since the mark was made (gone), or the face is covered by a full block in front of it.
+     * The part of a mark centred at (ca, cb) in block's face coordinates that lies on the given surface plane of that
+     * block: the whole of the block's shape in that plane, with the mark's texture laid over it and the texture's
+     * clear margin over the rest. So marks that overlap on a face have the same quads and blend instead of fighting
+     * over depth. Skipped when the mark does not reach the face, the block changed since the mark was made (gone), or
+     * the face is covered by a full block in front of it. turn turns and mirrors the texture (see markTex).
      */
     private static void splatPart(Level level, FloatArrayList out, LongOpenHashSet gone, BlockPos block, Direction face,
-                                  float ca, float cb, double surface, Vec3 cam, float alpha, float half, boolean glow,
-                                  double lift) {
+                                  float ca, float cb, double surface, Vec3 cam, float alpha, float half, int turn,
+                                  boolean glow, double lift) {
         if (ca + half <= 0 || ca - half >= 1 || cb + half <= 0 || cb - half >= 1 || gone.contains(block.asLong())) {
             return;
         }
         float[] shape = faceRect(level, block, face, surface);
         if (shape == null) {
-            return;
-        }
-        float a0 = Math.max(shape[0], ca - half), a1 = Math.min(shape[1], ca + half);
-        float b0 = Math.max(shape[2], cb - half), b1 = Math.min(shape[3], cb + half);
-        if (a1 <= a0 || b1 <= b0) {
             return;
         }
         BlockPos air = block.relative(face);
@@ -399,15 +437,26 @@ final class DecalRenderer {
         // Lit by the lightmap like the block under it; glowing parts (embers) stay bright in the dark
         int color = OverlayRenderer.argb(alpha, 0xFFFFFF, OverlayRenderer.lit || glow ? 1 : faceShade(face));
         int light = glow ? OverlayRenderer.FULL_BRIGHT : OverlayRenderer.packedLight(level, air);
-        // Texture coordinates follow the cut rectangle, so the splat is cut off at the edge, not squashed
-        float size = 2 * half;
-        float u0 = (a0 - (ca - half)) / size, u1 = (a1 - (ca - half)) / size;
-        float v0 = 1 - (b0 - (cb - half)) / size, v1 = 1 - (b1 - (cb - half)) / size;
-        vertex(out, block, face, surface, a0, b0, cam, lift, u0, v0, color);
-        vertex(out, block, face, surface, a1, b0, cam, lift, u1, v0, color);
-        vertex(out, block, face, surface, a1, b1, cam, lift, u1, v1, color);
-        vertex(out, block, face, surface, a0, b1, cam, lift, u0, v1, color);
+        for (int c = 0; c < 4; c++) {
+            float a = c == 1 || c == 2 ? shape[1] : shape[0], b = c >= 2 ? shape[3] : shape[2];
+            vertex(out, block, face, surface, a, b, cam, lift, markTex(turn, a - ca, cb - b, half + 1, false),
+                    markTex(turn, a - ca, cb - b, half + 1, true), color);
+        }
         end(out, face, light);
+    }
+
+    /**
+     * Texture coordinate (v when wantV, else u) of a point (x, y) in blocks from the middle of a mark, y growing down
+     * the texture, on a sheet texHalf blocks either way of it, turned by turn: 0 to 3 quarter turns, plus 4 mirrored.
+     */
+    private static float markTex(int turn, double x, double y, double texHalf, boolean wantV) {
+        if ((turn & 4) != 0) {
+            x = -x;
+        }
+        int quarter = turn & 3;
+        int cos = quarter == 0 ? 1 : quarter == 2 ? -1 : 0, sin = quarter == 1 ? 1 : quarter == 3 ? -1 : 0;
+        double t = wantV ? sin * x + cos * y : cos * x - sin * y;
+        return (float) ((t + texHalf) / (2 * texHalf));
     }
 
     /**
