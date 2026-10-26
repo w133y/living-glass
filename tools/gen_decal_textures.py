@@ -5,8 +5,8 @@ ash_full_{variant}_{mask}: scorch under or behind a fire, covering nearly the wh
 2 right, 4 bottom, 8 top) mark edges that fade out; an edge without its bit continues into the next block's ash.
 ash_side_{variant}_{mask}: soot on a block next to a fire, from the bottom up to about half the face. Only the
 left/right bits are used; the top always fades out.
-Both darken the block's own texture like the lightning scorch (see below), and their alpha is how far the ash must
-have built up for each pixel to show.
+Both are dark soot laid over the block in a few crisp steps of opacity, most opaque in the heart; how far the ash
+has built up scales its opacity, so it comes and goes smoothly.
 snow_{variant}: a snowball splat in a 14x14 square (14/16 of a block), in SNOW_VARIANTS shapes: a round lump lit
 from the top left with a few bits of snow thrown off round it.
 lightning_scorch_{variant}: a 64x64 burn mark spanning 4x4 blocks where lightning struck, in LIGHTNING_VARIANTS
@@ -34,7 +34,7 @@ S = 16
 VARIANTS = 3
 
 # Ash as a multiplier, from the edge of a patch to its heart
-ASH_CHAR = [(108, 104, 100), (84, 80, 76), (62, 58, 55), (42, 40, 38)]
+ASH_SOOT = [(40, 36, 33, 70), (32, 29, 26, 110), (26, 23, 21, 150), (20, 18, 16, 185)]
 SNOW = [(255, 255, 255, 255), (240, 246, 248, 255), (219, 230, 236, 255), (194, 208, 216, 255)]
 EMBERS = [(255, 214, 110, 255), (255, 150, 40, 255), (200, 70, 20, 255)]
 # Sand melted into a glass pool, shaded like a vanilla glass pane: lit side, clear middle and thick side of the
@@ -87,14 +87,11 @@ for variant in range(VARIANTS):
     rnd = random.Random(7 + variant * 1000)
     rag = smooth(rnd, S, 3, 1.3)
     tone = smooth(rnd, S, 4, 0.9)
-    clump = smooth(random.Random(17 + variant * 1000), S, 4, 0.5)  # so pixels come and go in clumps
-    clump = [[v + 0.5 for v in row] for row in clump]
 
     # Full scorch: darkest in the middle, lighter toward edges that fade out. Toward an edge that carries on into the
-    # next block's ash the shade goes by the fading edges alone, so the two blocks meet without a seam. It spreads
-    # out from the middle as it builds up and draws back into it as it fades.
+    # next block's ash the shade goes by the fading edges alone, so the two blocks meet without a seam.
     for mask in range(16):
-        img = Image.new("RGBA", (S, S), NEUTRAL)
+        img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
         for y in range(S):
             for x in range(S):
                 d = edge_dist(x, y, mask) + rag[y][x]
@@ -103,13 +100,12 @@ for variant in range(VARIANTS):
                 level = 0 if d < 2 else 1 if d < 3 else 2 if d < 4.5 else 3
                 if level == 3 and min(x, S - 1 - x, y, S - 1 - y) >= 2 and tone[y][x] < -0.35:
                     level = 2  # a few lighter clumps in the heart, kept off the edges so joins match
-                lasts = 0.1 + 0.55 * max(0.0, 1 - d / 5) + 0.25 * clump[y][x]
-                img.putpixel((x, y), charred(ASH_CHAR[level], lasts))
+                img.putpixel((x, y), ASH_SOOT[level])
         img.save(f"{out}/ash_full_{variant}_{mask}.png")
 
-    # Side soot: rises from the bottom in steps with a ragged top, and climbs as it builds up
+    # Side soot: rises from the bottom in steps with a ragged top
     for mask in range(4):
-        img = Image.new("RGBA", (S, S), NEUTRAL)
+        img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
         for y in range(S):
             for x in range(S):
                 rise = (S - 1 - y) + rag[y][x] * 1.5
@@ -118,8 +114,7 @@ for variant in range(VARIANTS):
                     continue
                 level = 3 if rise < 2 else 2 if rise < 4.5 else 1 if rise < 6.5 else 0
                 level = min(level, int(side) - 1) if side < 4 else level
-                lasts = 0.1 + 0.7 * max(0.0, rise) / 8 + 0.15 * clump[y][x]
-                img.putpixel((x, y), charred(ASH_CHAR[max(0, level)], lasts))
+                img.putpixel((x, y), ASH_SOOT[max(0, level)])
         img.save(f"{out}/ash_side_{variant}_{mask}.png")
 
 

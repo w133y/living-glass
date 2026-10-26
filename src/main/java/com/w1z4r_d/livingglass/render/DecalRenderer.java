@@ -153,7 +153,7 @@ final class DecalRenderer {
         for (int i = 0; i < ashLists.length; i++) {
             String name = i < SIDE_BASE ? "ash_full_" + i / 16 + "_" + i % 16
                     : "ash_side_" + (i - SIDE_BASE) / 4 + "_" + (i - SIDE_BASE) % 4;
-            OverlayRenderer.submitMultiply(collector, poseStack, name, ashLists[i]); // darkens the block's own texture
+            OverlayRenderer.submitDecal(collector, poseStack, name, ashLists[i]);
         }
         for (int i = 0; i < SNOW_VARIANTS; i++) {
             OverlayRenderer.submitDecal(collector, poseStack, "snow_" + i, snowLists[i]);
@@ -275,9 +275,8 @@ final class DecalRenderer {
             mask = (mask & ~12) | ((mask & 4) << 1) | ((mask & 8) >> 1);
         }
         a.look.show(a.kind == Kind.FULL ? variant * 16 + mask : SIDE_BASE + variant * 4 + (mask & 3));
-        // White, as it multiplies the block under it, which is shaded already. How far it has built up picks which of
-        // its pixels show (see the ash textures' alpha); at each corner only as far as the faintest ash meeting there,
-        // so neighbouring patches grow and fade into each other rather than one ending at the other's bare edge
+        // As opaque as it has built up, at each corner only as far as the faintest ash meeting there, so neighbouring
+        // patches grow and fade into each other rather than one ending at the other's bare edge
         float[] corner = new float[4];
         for (int c = 0; c < 4; c++) {
             corner[c] = a.notch[c] ? 0 : a.amount;
@@ -308,7 +307,7 @@ final class DecalRenderer {
                 float y0 = Math.max(r[2], j * step), y1 = Math.min(r[3], (j + 1) * step);
                 if (x1 > x0 && y1 > y0) {
                     rect(out, pos, a.face, a.plane, cam, x0, x1, y0, y1, flipU, flipV,
-                            even ? OverlayRenderer.argb(corner[0], 0xFFFFFF, 1) : pixel(a, corner, i, j, step), light);
+                            even ? soot(corner[0], a.shade) : pixel(a, corner, i, j, step), light);
                 }
             }
         }
@@ -924,7 +923,7 @@ final class DecalRenderer {
     }
 
     /**
-     * White with the alpha of pixel cell (i, j) of an ash face: the corners' alpha (left-bottom, right-bottom,
+     * The colour of pixel cell (i, j) of an ash face, with the corners' alpha (left-bottom, right-bottom,
      * right-top, left-top) blended to its middle, give or take a little per pixel where it is neither built up nor
      * gone, so a patch fading toward a corner ends in a ragged pixel edge rather than a straight one.
      */
@@ -934,7 +933,12 @@ final class DecalRenderer {
         float alpha = bottom + (top - bottom) * y;
         float jitter = ((OverlayRenderer.hash(a.seed + i * 131 + j * 7919 + 17) & 0xFF) / 255f - 0.5f) * 0.4f;
         alpha += jitter * (1 - Math.abs(2 * alpha - 1));
-        return OverlayRenderer.argb(Math.clamp(alpha, 0f, 1f), 0xFFFFFF, 1);
+        return soot(Math.clamp(alpha, 0f, 1f), a.shade);
+    }
+
+    /** Vertex colour of ash as opaque as alpha, shaded like its face (shader packs shade it themselves). */
+    private static int soot(float alpha, float shade) {
+        return OverlayRenderer.argb(alpha, 0xFFFFFF, OverlayRenderer.lit ? 1 : shade);
     }
 
     private static float u(float x, boolean flip) {
