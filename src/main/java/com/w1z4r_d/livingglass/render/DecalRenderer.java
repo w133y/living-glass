@@ -35,6 +35,9 @@ final class DecalRenderer {
     private static final float SCORCH_HALF = 2;
     /** Embers glow for this long after the strike, then only the burn mark is left. */
     private static final int EMBER_TICKS = 200;
+    /** How far a burn mark runs down (or up) the side of a step in the ground, in blocks, and in how many pixel rows. */
+    private static final double DRAPE = 0.75;
+    private static final int DRAPE_ROWS = 8;
     private static final FloatArrayList[] scorchLists = lists(VARIANTS);
     private static final FloatArrayList[] emberLists = lists(VARIANTS);
     /** A splat fades out over the last quarter of its life. */
@@ -235,39 +238,130 @@ final class DecalRenderer {
     }
 
     /**
-     * A lightning burn mark on the top faces around the strike, following uneven ground: each column within reach
-     * gets its part on the highest open top face near the strike height. Embers glow over it while it is fresh.
+     * A lightning burn mark projected from above onto the ground around the strike. Each column gets its part on
+     * its highest open top face; where neighbouring columns differ in height, the mark runs down the side faces
+     * of the step from above and climbs them from below, fading out in pixel rows, so it has no hard cut at an
+     * edge. Embers glow on the top faces while the mark is fresh.
      */
     private static void drawStrike(Level level, DecalTracker.Strike st, Vec3 cam, long age, long life) {
         if (age >= life) {
             return;
         }
-        float fade = age < life * 2 / 3 ? 1 : (life - age) / (life / 3f);
+        float fade = 0.9f * (age < life * 2 / 3 ? 1 : (life - age) / (life / 3f));
         float glow = age < EMBER_TICKS ? 1 - age / (float) EMBER_TICKS : 0;
         BlockPos ground = BlockPos.of(st.ground());
         int variant = Math.floorMod(st.seed(), VARIANTS);
-        int reach = (int) Math.ceil(SCORCH_HALF);
+        int reach = (int) Math.ceil(SCORCH_HALF) + 1;
+        int size = 2 * reach + 1;
+        int[] top = new int[size * size];
+        double[] surface = new double[size * size];
         for (int dx = -reach; dx <= reach; dx++) {
             for (int dz = -reach; dz <= reach; dz++) {
+                int i = (dx + reach) * size + dz + reach;
+                top[i] = Integer.MIN_VALUE;
                 for (int dy = 1; dy >= -2; dy--) {
                     BlockPos block = ground.offset(dx, dy, dz);
                     BlockPos above = block.above();
-                    if (!DecalTracker.INSTANCE.hasFace(block, Direction.UP)
-                            || level.getBlockState(above).isCollisionShapeFullBlock(level, above)) {
+                    if (DecalTracker.INSTANCE.hasFace(block, Direction.UP)
+                            && !level.getBlockState(above).isCollisionShapeFullBlock(level, above)) {
+                        top[i] = block.getY();
+                        surface[i] = block.getY() + level.getBlockState(block).getShape(level, block).max(Direction.Axis.Y);
+                        break;
+                    }
+                }
+            }
+        }
+        for (int dx = -reach; dx <= reach; dx++) {
+            for (int dz = -reach; dz <= reach; dz++) {
+                int i = (dx + reach) * size + dz + reach;
+                if (top[i] == Integer.MIN_VALUE) {
+                    continue;
+                }
+                BlockPos block = new BlockPos(ground.getX() + dx, top[i], ground.getZ() + dz);
+                // Floor face coordinates: x across, north up
+                float ca = (float) (st.x() - block.getX());
+                float cb = (float) (1 - (st.z() - block.getZ()));
+                double local = surface[i] - top[i];
+                splatPart(level, scorchLists[variant], block, Direction.UP, ca, cb, local, cam, fade, SCORCH_HALF, false);
+                if (glow > 0) {
+                    splatPart(level, emberLists[variant], block, Direction.UP, ca, cb, local, cam, glow, SCORCH_HALF, true);
+                }
+                // Each pair of neighbouring columns once: toward east and toward south
+                for (Direction dir : new Direction[] {Direction.EAST, Direction.SOUTH}) {
+                    int nx = dx + dir.getStepX(), nz = dz + dir.getStepZ();
+                    if (nx > reach || nz > reach) {
                         continue;
                     }
-                    double surface = level.getBlockState(block).getShape(level, block).max(Direction.Axis.Y);
-                    // Floor face coordinates: x across, north up
-                    float ca = (float) (st.x() - block.getX());
-                    float cb = (float) (1 - (st.z() - block.getZ()));
-                    splatPart(level, scorchLists[variant], block, Direction.UP, ca, cb, surface, cam, fade * 0.9f,
-                            SCORCH_HALF, false);
-                    if (glow > 0) {
-                        splatPart(level, emberLists[variant], block, Direction.UP, ca, cb, surface, cam, glow,
-                                SCORCH_HALF, true);
+                    int j = (nx + reach) * size + nz + reach;
+                    if (top[j] == Integer.MIN_VALUE || top[j] == top[i]) {
+                        continue;
                     }
-                    break;
+                    boolean here = top[i] > top[j];
+                    int high = here ? i : j, low = here ? j : i;
+                    BlockPos tall = here ? block : new BlockPos(ground.getX() + nx, top[j], ground.getZ() + nz);
+                    drape(level, scorchLists[variant], st, tall, here ? dir : dir.getOpposite(), top[low] + 1,
+                            surface[low], surface[high], cam, fade);
                 }
+            }
+        }
+    }
+
+    /**
+     * Scorch on the side faces of a step: the blocks of the taller column from just above the lower column's top
+     * up to the tall column's top, on the face toward the lower column. Each pixel row takes the texture row at the
+     * step's edge line, drawn down from the top edge and up from the lower ground, fading out over DRAPE.
+     */
+    private static void drape(Level level, FloatArrayList out, DecalTracker.Strike st, BlockPos tallTop, Direction face,
+                              int fromY, double lowSurface, double highSurface, Vec3 cam, float fade) {
+        Direction across = across(face);
+        boolean acrossPositive = across.getAxisDirection() == Direction.AxisDirection.POSITIVE;
+        boolean facePositive = face.getAxisDirection() == Direction.AxisDirection.POSITIVE;
+        boolean alongX = across.getAxis() == Direction.Axis.X;
+        double centreAlong = alongX ? st.x() : st.z();
+        double centreFixed = alongX ? st.z() : st.x();
+        double fixed = (alongX ? tallTop.getZ() : tallTop.getX()) + (facePositive ? 1 : 0);
+        if (Math.abs(fixed - centreFixed) >= SCORCH_HALF) {
+            return;
+        }
+        double blockAlong = alongX ? tallTop.getX() : tallTop.getZ();
+        double w0 = Math.max(blockAlong, centreAlong - SCORCH_HALF), w1 = Math.min(blockAlong + 1, centreAlong + SCORCH_HALF);
+        if (w1 <= w0) {
+            return;
+        }
+        float a0 = (float) (acrossPositive ? w0 - blockAlong : 1 - (w1 - blockAlong));
+        float a1 = (float) (acrossPositive ? w1 - blockAlong : 1 - (w0 - blockAlong));
+        float uFixed = (float) ((fixed - centreFixed + SCORCH_HALF) / (2 * SCORCH_HALF));
+        float tex0 = (float) ((w0 - centreAlong + SCORCH_HALF) / (2 * SCORCH_HALF));
+        float tex1 = (float) ((w1 - centreAlong + SCORCH_HALF) / (2 * SCORCH_HALF));
+        // Texture coordinates of the face's a0 and a1 ends: u runs along x, v along z
+        float alongA0 = acrossPositive ? tex0 : tex1, alongA1 = acrossPositive ? tex1 : tex0;
+        float uA0 = alongX ? alongA0 : uFixed, vA0 = alongX ? uFixed : alongA0;
+        float uA1 = alongX ? alongA1 : uFixed, vA1 = alongX ? uFixed : alongA1;
+        boolean lit = OverlayRenderer.lit;
+        for (int y = fromY; y <= tallTop.getY(); y++) {
+            BlockPos block = new BlockPos(tallTop.getX(), y, tallTop.getZ());
+            BlockPos air = block.relative(face);
+            if (!DecalTracker.INSTANCE.hasFace(block, face) || level.getBlockState(air).isCollisionShapeFullBlock(level, air)) {
+                continue;
+            }
+            float shade = lit ? 1 : OverlayRenderer.shade(level, air);
+            int light = lit ? OverlayRenderer.packedLight(level, air) : OverlayRenderer.FULL_BRIGHT;
+            double plane = (facePositive ? 1 : 0) + (facePositive ? LIFT : -LIFT);
+            for (int row = 0; row < DRAPE_ROWS; row++) {
+                float y0 = row / (float) DRAPE_ROWS, y1 = (row + 1) / (float) DRAPE_ROWS;
+                double middle = y + (y0 + y1) / 2;
+                float down = (float) (1 - (highSurface - middle) / DRAPE);
+                float up = (float) (1 - (middle - lowSurface) / DRAPE);
+                float strength = Math.clamp(Math.max(down, up), 0f, 1f);
+                if (strength < 0.05f) {
+                    continue;
+                }
+                int color = OverlayRenderer.argb(fade * strength, 0xFFFFFF, shade);
+                vertex(out, block, face, plane, a0, y0, cam, uA0, vA0, color);
+                vertex(out, block, face, plane, a1, y0, cam, uA1, vA1, color);
+                vertex(out, block, face, plane, a1, y1, cam, uA1, vA1, color);
+                vertex(out, block, face, plane, a0, y1, cam, uA0, vA0, color);
+                end(out, face, light);
             }
         }
     }
