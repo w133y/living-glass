@@ -16,6 +16,7 @@ import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BaseFireBlock;
 import net.minecraft.world.level.block.FireBlock;
+import net.minecraft.world.level.block.SnowLayerBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BooleanProperty;
 import net.minecraft.world.phys.AABB;
@@ -23,6 +24,7 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.CollisionContext;
+import net.minecraft.world.phys.shapes.VoxelShape;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -39,6 +41,8 @@ public final class DecalTracker {
     private static final int MAX_STRIKES = 32;
     private static final double SNOWBALL_RANGE = 64;
     private static final Direction[] FIRE_SIDES = {Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST, Direction.UP};
+    /** How many columns a burn mark reaches either way from the struck one: four blocks across round any point of it. */
+    public static final int STRIKE_REACH = 3;
 
     /** Full scorch under or behind a fire, or the lower half of a block standing next to one. */
     public enum Kind { FULL, SIDE }
@@ -58,7 +62,7 @@ public final class DecalTracker {
         public float shade;
         public int light;
         public int mask;
-        /** Block-local position of the face plane along its normal, lifted just off the surface. */
+        /** Block-local position of the face's surface along its normal. */
         public double plane;
         /** Part of the face the block's shape actually covers, in face coordinates {a0, a1, b0, b1}. */
         public float[] rect;
@@ -70,12 +74,21 @@ public final class DecalTracker {
         }
     }
 
-    /** A snowball hit, at a point of a face in block-local coordinates. */
-    public record Splat(long pos, Direction face, double x, double y, double z, int seed, long born) {
+    /**
+     * A snowball hit, at a point of a face in block-local coordinates. Blocks around it that changed since (broken or
+     * placed) are in gone: the parts of the splat that spill onto them go, and new blocks there stay clean.
+     */
+    public record Splat(long pos, Direction face, double x, double y, double z, int seed, long born, LongOpenHashSet gone) {
     }
 
-    /** A lightning strike: the ground block it hit and the strike point in world coordinates (x, z on the pixel grid). */
-    public record Strike(long ground, double x, double z, int seed, long born) {
+    /**
+     * A lightning strike: the ground block it hit, the strike point in world coordinates (x, z on the pixel grid) and
+     * the ground around it as it was then, so the mark keeps to those blocks: for each column the y of the block whose
+     * top carries the mark and the height of that top (NaN where there is none). Blocks changed since are in gone and
+     * lose their part of the mark; the ground a broken block uncovers stays clean.
+     */
+    public record Strike(long ground, double x, double z, int seed, long born, int[] top, double[] surface,
+                         LongOpenHashSet gone) {
     }
 
     private final LongOpenHashSet fires = new LongOpenHashSet();
@@ -119,11 +132,25 @@ public final class DecalTracker {
         }
     }
 
-    /** A block changed: ash and splats on it vanish at once, and ash next to it re-checks how it joins up. */
+    /**
+     * A block changed: ash and splats on it vanish at once, so do the parts of splats and burn marks around it that
+     * lay on it, and ash next to it re-checks how it joins up.
+     */
     public void onBlockChanged(BlockPos pos) {
         long key = pos.asLong();
         ash.values().removeIf(a -> a.pos == key && (level == null || !hasFace(pos, a.face)));
         splats.removeIf(s -> s.pos() == key);
+        for (Splat s : splats) {
+            if (BlockPos.of(s.pos()).distManhattan(pos) <= 2) {
+                s.gone().add(key);
+            }
+        }
+        for (Strike st : strikes) {
+            BlockPos ground = BlockPos.of(st.ground());
+            if (Math.abs(pos.getX() - ground.getX()) <= STRIKE_REACH && Math.abs(pos.getZ() - ground.getZ()) <= STRIKE_REACH) {
+                st.gone().add(key);
+            }
+        }
         for (Ash a : ash.values()) {
             if (BlockPos.of(a.pos).distManhattan(pos) <= 2) {
                 a.renderTime = -1;
@@ -253,8 +280,46 @@ public final class DecalTracker {
         if (strikes.size() >= MAX_STRIKES) {
             strikes.remove(0);
         }
+        // The highest top a mark can lie on in every column around the strike
+        int size = 2 * STRIKE_REACH + 1;
+        int[] top = new int[size * size];
+        double[] surface = new double[size * size];
+        for (int dx = -STRIKE_REACH; dx <= STRIKE_REACH; dx++) {
+            for (int dz = -STRIKE_REACH; dz <= STRIKE_REACH; dz++) {
+                int i = (dx + STRIKE_REACH) * size + dz + STRIKE_REACH;
+                surface[i] = Double.NaN;
+                for (int dy = 2; dy >= -3; dy--) {
+                    BlockPos block = pos.offset(dx, dy, dz);
+                    double height = groundHeight(block);
+                    if (height > 0) {
+                        top[i] = block.getY();
+                        surface[i] = block.getY() + height;
+                        break;
+                    }
+                }
+            }
+        }
         strikes.add(new Strike(pos.asLong(), Math.round(at.x * 16) / 16.0, Math.round(at.z * 16) / 16.0,
-                (int) (tick * 0x632BE5ABL ^ pos.asLong()), tick));
+                (int) (tick * 0x632BE5ABL ^ pos.asLong()), tick, top, surface, new LongOpenHashSet()));
+    }
+
+    /**
+     * Height (0..1) of the surface on top of block that a burn mark can lie on, or 0 if there is none: the top of its
+     * real shape, so snow layers, slabs and carpets count, but grass and flowers you walk through do not, and neither
+     * does a block buried under a full block.
+     */
+    private double groundHeight(BlockPos block) {
+        BlockState state = level.getBlockState(block);
+        if (state.isAir() || state.getBlock() instanceof BaseFireBlock
+                || (state.getCollisionShape(level, block).isEmpty() && !(state.getBlock() instanceof SnowLayerBlock))) {
+            return 0;
+        }
+        BlockPos above = block.above();
+        if (level.getBlockState(above).isCollisionShapeFullBlock(level, above)) {
+            return 0;
+        }
+        VoxelShape shape = state.getShape(level, block);
+        return shape.isEmpty() ? 0 : shape.max(Direction.Axis.Y);
     }
 
     private void trackSnowballs(Vec3 player) {
@@ -304,7 +369,7 @@ public final class DecalTracker {
             splats.remove(0);
         }
         splats.add(new Splat(pos.asLong(), hit.getDirection(), at.x - pos.getX(), at.y - pos.getY(), at.z - pos.getZ(),
-                (int) (tick * 0x9E3779B9L ^ pos.asLong()), tick));
+                (int) (tick * 0x9E3779B9L ^ pos.asLong()), tick, new LongOpenHashSet()));
     }
 
 }
