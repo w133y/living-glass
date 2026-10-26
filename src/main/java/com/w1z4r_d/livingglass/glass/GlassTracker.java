@@ -515,8 +515,9 @@ public final class GlassTracker {
         BlockPos outside = pos.relative(gs.inner.getOpposite());
         BlockPos inside = pos.relative(gs.inner);
         float temp = Climate.outsideTemp(level, outside, cfg.climate);
-        // Outside ice only needs frost outdoors, not a warm room
-        gs.iceTarget = temp < Climate.FREEZING ? 1 : 0;
+        // Outside ice grows only while snow is falling on the window; afterwards it stays while it is freezing and
+        // melts once it is not
+        gs.iceTarget = Climate.snowingAt(level, outside) ? 1 : temp < Climate.FREEZING ? gs.ice : 0;
         float warmth = climate.warmth(level, inside, tick, cfg.climate.heatScanRadius);
         if (Float.isNaN(warmth)) {
             return; // scan budget spent this tick; try again next interval

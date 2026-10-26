@@ -73,6 +73,10 @@ final class Climate {
         return temp;
     }
 
+    static boolean snowingAt(Level level, BlockPos pos) {
+        return level.isRaining() && level.getBiome(pos).value().getPrecipitationAt(pos, level.getSeaLevel()) == Biome.Precipitation.SNOW;
+    }
+
     /** Heat around an inside position, 0..1; NaN when this tick's scan budget is spent and nothing is cached. */
     float warmth(Level level, BlockPos inside, long tick, int radius) {
         long key = BlockPos.asLong(inside.getX() >> 2, inside.getY() >> 2, inside.getZ() >> 2);

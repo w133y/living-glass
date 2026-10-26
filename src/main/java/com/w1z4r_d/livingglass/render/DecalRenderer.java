@@ -27,8 +27,12 @@ final class DecalRenderer {
     private static final int SIDE_BASE = VARIANTS * 16;
     private static final FloatArrayList[] ashLists = lists(SIDE_BASE + VARIANTS * 4);
     private static final FloatArrayList[] snowLists = lists(VARIANTS);
-    /** Decals sit just off the block surface. */
-    private static final double LIFT = 0.003;
+    /**
+     * Decals sit just off the block surface, each kind at its own height so that two kinds on one face (snow on
+     * ash, embers on a burn mark) never share a depth and flicker, especially with shader packs.
+     */
+    private static final double LIFT = 0.005;
+    private static final double SCORCH_LIFT = 2 * LIFT, SNOW_LIFT = 3 * LIFT, EMBER_LIFT = 4 * LIFT;
     /** Snow splat texture is 10 pixels wide, at the same pixel size as the block textures. */
     private static final float SPLAT_HALF = 5 / 16f;
     /** The lightning scorch texture is 64 pixels, four blocks across. */
@@ -203,7 +207,8 @@ final class DecalRenderer {
         FloatArrayList out = snowLists[Math.floorMod(s.seed(), VARIANTS)];
         for (int da = -1; da <= 1; da++) {
             for (int db = -1; db <= 1; db++) {
-                splatPart(level, out, pos.relative(t1, da).relative(t2, db), face, a - da, b - db, surface, cam, alpha, SPLAT_HALF, false);
+                splatPart(level, out, pos.relative(t1, da).relative(t2, db), face, a - da, b - db, surface, cam, alpha,
+                        SPLAT_HALF, false, SNOW_LIFT);
             }
         }
         if (!atBoundary(face, surface)) {
@@ -224,7 +229,7 @@ final class DecalRenderer {
                 folded[axis] = tPositive ? 1 : 0;
                 folded[normal] = surface + (positive ? toEdge : -toEdge);
                 splatPart(level, out, pos, t, coord(across(t), folded), coord(up(t), folded), tPositive ? 1 : 0, cam, alpha,
-                        SPLAT_HALF, false);
+                        SPLAT_HALF, false, SNOW_LIFT);
             } else {
                 // Inside corner: the wall goes on, and a block in front of it stands out; climb its side face
                 BlockPos corner = side.relative(face);
@@ -232,7 +237,7 @@ final class DecalRenderer {
                 folded[axis] = tPositive ? 0 : 1;
                 folded[normal] = (positive ? 0 : 1) - (positive ? toEdge : -toEdge);
                 splatPart(level, out, corner, back, coord(across(back), folded), coord(up(back), folded),
-                        tPositive ? 0 : 1, cam, alpha, SPLAT_HALF, false);
+                        tPositive ? 0 : 1, cam, alpha, SPLAT_HALF, false, SNOW_LIFT);
             }
         }
     }
@@ -282,9 +287,11 @@ final class DecalRenderer {
                 float ca = (float) (st.x() - block.getX());
                 float cb = (float) (1 - (st.z() - block.getZ()));
                 double local = surface[i] - top[i];
-                splatPart(level, scorchLists[variant], block, Direction.UP, ca, cb, local, cam, fade, SCORCH_HALF, false);
+                splatPart(level, scorchLists[variant], block, Direction.UP, ca, cb, local, cam, fade, SCORCH_HALF, false,
+                        SCORCH_LIFT);
                 if (glow > 0) {
-                    splatPart(level, emberLists[variant], block, Direction.UP, ca, cb, local, cam, glow, SCORCH_HALF, true);
+                    splatPart(level, emberLists[variant], block, Direction.UP, ca, cb, local, cam, glow, SCORCH_HALF, true,
+                            EMBER_LIFT);
                 }
                 // Each pair of neighbouring columns once: toward east and toward south
                 for (Direction dir : new Direction[] {Direction.EAST, Direction.SOUTH}) {
@@ -346,7 +353,7 @@ final class DecalRenderer {
             }
             float shade = lit ? 1 : OverlayRenderer.shade(level, air);
             int light = lit ? OverlayRenderer.packedLight(level, air) : OverlayRenderer.FULL_BRIGHT;
-            double plane = (facePositive ? 1 : 0) + (facePositive ? LIFT : -LIFT);
+            double plane = (facePositive ? 1 : 0) + (facePositive ? SCORCH_LIFT : -SCORCH_LIFT);
             for (int row = 0; row < DRAPE_ROWS; row++) {
                 float y0 = row / (float) DRAPE_ROWS, y1 = (row + 1) / (float) DRAPE_ROWS;
                 double middle = y + (y0 + y1) / 2;
@@ -372,7 +379,7 @@ final class DecalRenderer {
      * covered by a full block in front of it.
      */
     private static void splatPart(Level level, FloatArrayList out, BlockPos block, Direction face, float ca, float cb,
-                                  double surface, Vec3 cam, float alpha, float half, boolean glow) {
+                                  double surface, Vec3 cam, float alpha, float half, boolean glow, double lift) {
         if (ca + half <= 0 || ca - half >= 1 || cb + half <= 0 || cb - half >= 1) {
             return;
         }
@@ -397,7 +404,7 @@ final class DecalRenderer {
         float size = 2 * half;
         float u0 = (a0 - (ca - half)) / size, u1 = (a1 - (ca - half)) / size;
         float v0 = 1 - (b0 - (cb - half)) / size, v1 = 1 - (b1 - (cb - half)) / size;
-        double plane = surface + (face.getAxisDirection() == Direction.AxisDirection.POSITIVE ? LIFT : -LIFT);
+        double plane = surface + (face.getAxisDirection() == Direction.AxisDirection.POSITIVE ? lift : -lift);
         vertex(out, block, face, plane, a0, b0, cam, u0, v0, color);
         vertex(out, block, face, plane, a1, b0, cam, u1, v0, color);
         vertex(out, block, face, plane, a1, b1, cam, u1, v1, color);

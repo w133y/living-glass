@@ -10,7 +10,7 @@ Client-side only. No new blocks, no crafting, works on any server.
 
 ![Frost creeping in from the frame](https://raw.githubusercontent.com/w133y/living-glass/main/media/frost.gif)
 
-🧊 **Outside ice:** below freezing, bluish ice grows on the outside of the glass, mostly from the bottom.
+🧊 **Outside ice:** during snowfall, feathery frost grows on the outside of the glass from a little bank of snow at the bottom.
 
 🔥 **Ash:** fire leaves a black scorch on the block it burns on and soot on the blocks next to it. It fades after the fire is out.
 

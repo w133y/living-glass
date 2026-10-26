@@ -16,14 +16,16 @@ os.makedirs(out, exist_ok=True)
 S = 16
 VARIANTS = 3
 FROST_REACH = [3, 5, 8, 11]
-ICE_REACH = [2, 4, 6, 8]
+ICE_REACH = [4, 7, 10, 13]
 
 # Palettes (RGBA)
 HAZE = [(232, 238, 244, 150), (232, 238, 244, 128), (232, 238, 244, 108)]
 DROP_LIGHT, DROP_BODY, DROP_SHADOW = (255, 255, 255, 235), (214, 225, 236, 70), (182, 197, 212, 150)
 FROST_CRYSTAL, FROST_RIME, FROST_THIN = (240, 248, 255, 235), (206, 226, 248, 190), (190, 214, 244, 125)
-ICE_TOP, ICE_BODY, ICE_DEEP, ICE_STREAK = (214, 232, 255, 225), (165, 195, 250, 205), (145, 183, 246, 215), (235, 243, 255, 230)
-ICE_RIM = (188, 212, 250, 150)
+# Outside ice: nearly white with grey-blue shading, and a bank of snow along the bottom
+SNOW_TOP, SNOW_BANK = (250, 252, 255, 255), (228, 235, 242, 255)
+FEATHER_SPINE, FEATHER, FEATHER_SHADE = (242, 247, 252, 235), (216, 227, 238, 215), (190, 205, 221, 200)
+ICE_HAZE, ICE_RIM = (222, 231, 240, 60), (214, 226, 238, 140)
 
 
 def smooth(rnd, cells, amp):
@@ -110,21 +112,63 @@ def frost(mask, stage, fern, rag):
     return img
 
 
-def ice(mask, stage, wave):
-    """Outside ice in the manner of the vanilla ice block: light blue with white diagonal streaks. It rises from the
-    bottom frame with a stepped top edge; the other frame edges only get a one-pixel rim once it has grown."""
+def feathers(rnd):
+    """Feathery frost like on a real window: a few curved spines rising from the bottom with dense barbs slanting up
+    on both sides. Returns (height, kind) grids: how high above the bottom each pixel sits (it appears once the ice
+    has grown that high) and whether it is a spine (2) or a barb (1)."""
+    height = [[float("inf")] * S for _ in range(S)]
+    kind = [[0] * S for _ in range(S)]
+
+    def mark(x, y, k):
+        px, py = int(round(x)), int(round(y))
+        if 0 <= px < S and 0 <= py < S:
+            height[py][px] = min(height[py][px], S - 1 - py)
+            kind[py][px] = max(kind[py][px], k)
+
+    starts = [rnd.uniform(2.5, 5.5), rnd.uniform(10.5, 13.5)] + ([rnd.uniform(7, 9)] if rnd.random() < 0.6 else [])
+    for x in starts:
+        y = S - 2.0
+        # Lean away from the middle of the block, so feathers fan out
+        angle = -math.pi / 2 + (0.35 if x > 8 else -0.35) * rnd.uniform(0.4, 1.0)
+        bend = rnd.uniform(-0.06, 0.06)
+        length = rnd.randint(10, 13)
+        for step in range(length):
+            mark(x, y, 2)
+            # Barbs every other step, longer low down, so the feather narrows to its tip with gaps between barbs
+            barb = 0 if step % 2 else 2 + (length - step) // 5
+            for side in (-1, 1):
+                bx, by, ba = x, y, angle + side * 0.7
+                for _ in range(barb):
+                    bx += math.cos(ba)
+                    by += math.sin(ba)
+                    mark(bx, by, 1)
+            x += math.cos(angle)
+            y += math.sin(angle)
+            angle += bend
+    return height, kind
+
+
+def ice(mask, stage, wave, feather):
+    """Outside ice: pale, nearly white feathery frost growing up from the bottom frame, on a little bank of snow.
+    The other frame edges only get a thin rim once it has grown."""
     reach = ICE_REACH[stage]
+    height, kind = feather
     img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     for y in range(S):
         for x in range(S):
-            up = S - 1 - y  # pixels above the bottom
-            height = reach + wave[x] if mask & 4 else -1
-            if up < height:
-                px = ICE_TOP if up == height - 1 else ICE_DEEP if up < 2 else ICE_BODY
-                if px is ICE_BODY and (x + up) % 6 == 0:
-                    px = ICE_STREAK
-                img.putpixel((x, y), px)
-            elif stage >= 2 and ((mask & 1 and x == 0) or (mask & 2 and x == S - 1) or (mask & 8 and y == 0)):
+            up = S - 1 - y
+            if mask & 4:
+                snow = 1 + (wave[x] if stage >= 1 else 0)
+                if up < snow:
+                    img.putpixel((x, y), SNOW_TOP if up == snow - 1 else SNOW_BANK)
+                    continue
+                if height[y][x] < reach:
+                    img.putpixel((x, y), FEATHER_SPINE if kind[y][x] == 2 else FEATHER_SHADE if (x + y) % 3 == 0 else FEATHER)
+                    continue
+                if up < reach * 0.3:
+                    img.putpixel((x, y), ICE_HAZE)  # thin rime between the feathers near the bottom
+                    continue
+            if stage >= 2 and ((mask & 1 and x == 0) or (mask & 2 and x == S - 1) or (mask & 8 and y == 0)):
                 img.putpixel((x, y), ICE_RIM)
     return img
 
@@ -139,13 +183,14 @@ for variant in range(VARIANTS):
         if all(abs(x - a) > 3 or abs(y - b) > 3 for a, b in drops):
             drops.append((x, y))
     beads = {(rnd.randrange(S), rnd.randrange(S)) for _ in range(5)}
-    # Ice top edge: a wave that is zero at both block edges, so neighbouring blocks of a window meet without a step
-    k, amp = rnd.choice([1, 2]), rnd.choice([1.0, 1.5])
-    wave = [round(amp * math.sin(math.pi * k * x / S)) for x in range(S)]
+    # Snow bank top: a wave that is zero at both block edges, so neighbouring blocks of a window meet without a step
+    k = rnd.choice([1, 2, 3])
+    wave = [max(0, round(2.2 * math.sin(math.pi * k * x / S))) for x in range(S)]
+    feather = feathers(random.Random(300 + variant * 1000))
     for mask in range(16):
         condensation(mask, rag, drops, beads).save(f"{out}/condensation_{variant}_{mask}.png")
         fern = ferns(mask, random.Random(100 + mask + variant * 1000))
         for stage in range(4):
             frost(mask, stage, fern, rag).save(f"{out}/frost_{variant}_{mask}_{stage}.png")
-            ice(mask, stage, wave).save(f"{out}/ice_{variant}_{mask}_{stage}.png")
+            ice(mask, stage, wave, feather).save(f"{out}/ice_{variant}_{mask}_{stage}.png")
 print("ok")
