@@ -84,13 +84,13 @@ public final class DecalTracker {
 
     /**
      * A lightning strike: the ground block it hit, the strike point in world coordinates (x, z on the pixel grid) and
-     * the ground around it as it was then, so the mark keeps to those blocks: for each column the y of the block whose
-     * top carries the mark and the height of that top, one block up to two down from the struck one; +infinity where
-     * the ground rises higher and -infinity where it drops away lower, so the mark only climbs or runs down the side
-     * there; NaN under water.
+     * the ground around it as it was then, so the mark keeps to those blocks. For each column: the height of its
+     * ground, one block up to two down from the struck one (+infinity where the ground rises higher and -infinity
+     * where it drops away lower, so the mark only climbs or runs down the side there; NaN under water), and as bits up
+     * from the ground block, the blocks whose tops carry the mark: the ground and posts, fences or lanterns on it.
      * Blocks changed since are in gone and lose their part of the mark; the ground a broken block uncovers stays clean.
      */
-    public record Strike(long ground, double x, double z, int seed, long born, int[] top, double[] surface,
+    public record Strike(long ground, double x, double z, int seed, long born, int[] layers, double[] surface,
                          LongOpenHashSet gone) {
     }
 
@@ -274,48 +274,91 @@ public final class DecalTracker {
 
     private void strike(Vec3 at) {
         BlockPos pos = BlockPos.containing(at.x, at.y - 0.05, at.z);
-        for (int i = 0; i < 4 && !hasFace(pos, Direction.UP); i++) {
+        for (int i = 0; i < 4 && groundHeight(pos) <= 0; i++) {
             pos = pos.below();
         }
-        if (!hasFace(pos, Direction.UP)) {
+        if (groundHeight(pos) <= 0) {
             return;
+        }
+        // A fence, post or lantern struck stands on the ground the mark spreads over
+        for (int i = 0; i < 3 && !fullFootprint(pos) && groundHeight(pos.below()) > 0; i++) {
+            pos = pos.below();
         }
         if (strikes.size() >= MAX_STRIKES) {
             strikes.remove(0);
         }
-        // The highest top a mark can lie on in every column around the strike
+        // The ground in every column around the strike, and what stands on it that the mark lies on too
         int size = 2 * STRIKE_REACH + 1;
-        int[] top = new int[size * size];
+        int[] layers = new int[size * size];
         double[] surface = new double[size * size];
         for (int dx = -STRIKE_REACH; dx <= STRIKE_REACH; dx++) {
             for (int dz = -STRIKE_REACH; dz <= STRIKE_REACH; dz++) {
                 int i = (dx + STRIKE_REACH) * size + dz + STRIKE_REACH;
                 surface[i] = Double.NaN;
+                int highest = Integer.MIN_VALUE, lowest = Integer.MIN_VALUE;
+                boolean water = false;
                 for (int dy = 1; dy >= -2; dy--) {
                     BlockPos block = pos.offset(dx, dy, dz);
                     BlockState state = level.getBlockState(block);
                     if (state.getBlock() instanceof LiquidBlock) {
+                        water = true;
                         break;
                     }
                     double height = groundHeight(block);
                     if (height > 0) {
-                        top[i] = block.getY();
-                        surface[i] = block.getY() + height;
-                        break;
+                        highest = Math.max(highest, block.getY());
+                        lowest = block.getY();
+                        if (fullFootprint(block)) {
+                            surface[i] = block.getY() + height;
+                            break;
+                        }
+                        continue; // a post or fence: the ground it stands on is further down
                     }
                     if (dy == 1 && !state.getCollisionShape(level, block).isEmpty()) {
-                        top[i] = block.getY(); // solid and buried: a hill or wall going on up
-                        surface[i] = Double.POSITIVE_INFINITY;
+                        surface[i] = Double.POSITIVE_INFINITY; // solid and buried: a hill or wall going on up
                         break;
                     }
-                    if (dy == -2) {
-                        surface[i] = Double.NEGATIVE_INFINITY;
+                }
+                if (Double.isNaN(surface[i]) && !water) {
+                    // Nothing to stand on within reach: posts over a drop are ground themselves, else it drops away
+                    surface[i] = lowest != Integer.MIN_VALUE
+                            ? lowest + groundHeight(new BlockPos(pos.getX() + dx, lowest, pos.getZ() + dz))
+                            : Double.NEGATIVE_INFINITY;
+                }
+                if (Double.isFinite(surface[i])) {
+                    int groundY = groundY(surface[i]);
+                    for (int y = groundY; y <= highest; y++) {
+                        if (groundHeight(new BlockPos(pos.getX() + dx, y, pos.getZ() + dz)) > 0) {
+                            layers[i] |= 1 << (y - groundY);
+                        }
                     }
                 }
             }
         }
         strikes.add(new Strike(pos.asLong(), Math.round(at.x * 16) / 16.0, Math.round(at.z * 16) / 16.0,
-                (int) (tick * 0x632BE5ABL ^ pos.asLong()), tick, top, surface, new LongOpenHashSet()));
+                (int) (tick * 0x632BE5ABL ^ pos.asLong()), tick, layers, surface, new LongOpenHashSet()));
+    }
+
+    /** The y of the block whose top is the ground at surface. */
+    public static int groundY(double surface) {
+        return (int) Math.ceil(surface - 1.0e-6) - 1;
+    }
+
+    /** Whether block's shape covers its whole cell seen from above, so it is ground, not a post standing on it. */
+    private boolean fullFootprint(BlockPos block) {
+        boolean[] covered = new boolean[256];
+        int count = 0;
+        for (AABB box : level.getBlockState(block).getShape(level, block).toAabbs()) {
+            for (int x = (int) Math.round(box.minX * 16); x < Math.round(box.maxX * 16); x++) {
+                for (int z = (int) Math.round(box.minZ * 16); z < Math.round(box.maxZ * 16); z++) {
+                    if (!covered[x * 16 + z]) {
+                        covered[x * 16 + z] = true;
+                        count++;
+                    }
+                }
+            }
+        }
+        return count == 256;
     }
 
     /**

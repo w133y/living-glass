@@ -7,6 +7,7 @@ import com.w1z4r_d.livingglass.decal.DecalTracker.Ash;
 import com.w1z4r_d.livingglass.decal.DecalTracker.Kind;
 import com.w1z4r_d.livingglass.decal.DecalTracker.Splat;
 import com.w1z4r_d.livingglass.glass.Melt;
+import it.unimi.dsi.fastutil.doubles.DoubleArrayList;
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.client.renderer.SubmitNodeCollector;
@@ -20,6 +21,7 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.VoxelShape;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -310,7 +312,7 @@ final class DecalRenderer {
         int style = OverlayRenderer.hash(st.seed());
         int variant = Math.floorMod(style, LIGHTNING_VARIANTS), turn = (style >>> 8) & 7;
         int reach = DecalTracker.STRIKE_REACH, size = 2 * reach + 1;
-        int[] top = st.top();
+        int[] layers = st.layers();
         double[] surface = st.surface();
         for (int dx = -reach; dx <= reach; dx++) {
             for (int dz = -reach; dz <= reach; dz++) {
@@ -319,18 +321,26 @@ final class DecalRenderer {
                     continue;
                 }
                 if (!Double.isInfinite(surface[i])) {
-                    BlockPos block = new BlockPos(ground.getX() + dx, top[i], ground.getZ() + dz);
                     // Floor face coordinates: x across, north up
-                    float ca = (float) (st.x() - block.getX());
-                    float cb = (float) (1 - (st.z() - block.getZ()));
-                    double local = surface[i] - top[i];
-                    for (FloatArrayList out : (fused(level, block) ? SAND : SOIL)[variant]) {
-                        splatPart(level, out, st.gone(), block, Direction.UP, ca, cb, local, cam, fade, SCORCH_HALF, turn,
-                                false, SCORCH_LIFT);
-                    }
-                    if (glow > 0) {
-                        splatPart(level, emberLists[variant], st.gone(), block, Direction.UP, ca, cb, local, cam, glow,
-                                SCORCH_HALF, turn, true, EMBER_LIFT);
+                    float ca = (float) (st.x() - (ground.getX() + dx));
+                    float cb = (float) (1 - (st.z() - (ground.getZ() + dz)));
+                    int groundY = DecalTracker.groundY(surface[i]);
+                    for (int k = 0; layers[i] >>> k != 0; k++) {
+                        if ((layers[i] >>> k & 1) == 0) {
+                            continue;
+                        }
+                        BlockPos block = new BlockPos(ground.getX() + dx, groundY + k, ground.getZ() + dz);
+                        // Every top of its shape: both treads of a stair, a fence post and its rails
+                        for (double local : tops(level, block)) {
+                            for (FloatArrayList out : (fused(level, block) ? SAND : SOIL)[variant]) {
+                                splatPart(level, out, st.gone(), block, Direction.UP, ca, cb, local, cam, fade,
+                                        SCORCH_HALF, turn, false, SCORCH_LIFT);
+                            }
+                            if (glow > 0) {
+                                splatPart(level, emberLists[variant], st.gone(), block, Direction.UP, ca, cb, local, cam,
+                                        glow, SCORCH_HALF, turn, true, EMBER_LIFT);
+                            }
+                        }
                     }
                 }
                 // Each pair of neighbouring columns once: toward east and toward south
@@ -351,7 +361,7 @@ final class DecalRenderer {
                     if (Double.isInfinite(low) || Double.isInfinite(high) || high - low > 1 + 1.0e-3) {
                         fold(level, variant, st, turn, wx, wz, face, low, high, cam, fade);
                     } else {
-                        drape(level, variant, st, turn, wx, top[here ? i : j], wz, face, low, high, cam, fade);
+                        drape(level, variant, st, turn, wx, DecalTracker.groundY(high), wz, face, low, high, cam, fade);
                     }
                 }
             }
@@ -388,19 +398,18 @@ final class DecalRenderer {
             BlockPos block = new BlockPos(x, y, z);
             BlockPos air = block.relative(face);
             DecalTracker.Key wall = new DecalTracker.Key(block.asLong(), face);
-            float[] rect = faceRect(level, block, face, plane);
-            if (rect == null || WALLS_TAKEN.contains(wall) || st.gone().contains(block.asLong())
+            List<float[]> rects = faceRects(level, block, face, plane);
+            if (rects.isEmpty() || WALLS_TAKEN.contains(wall) || st.gone().contains(block.asLong())
                     || level.getBlockState(air).isCollisionShapeFullBlock(level, air)) {
                 continue;
             }
             int light = OverlayRenderer.packedLight(level, air);
             FloatArrayList[] outs = (fused(level, block) ? SAND : SOIL)[variant];
-            float bottom = (float) Math.max(rect[2], lowSurface - y), roof = (float) Math.min(rect[3], highSurface - y);
             boolean drawn = false;
             for (int k = 0; k < 16; k++) {
                 double offset = blockAlong + (k + 0.5) / 16 - centreAlong; // this pixel column's centre from the strike
                 float a0 = acrossPositive ? k / 16f : 1 - (k + 1) / 16f, a1 = a0 + 1 / 16f;
-                if (Math.abs(offset) >= SCORCH_HALF || a0 < rect[0] - 1.0e-4f || a1 > rect[1] + 1.0e-4f) {
+                if (Math.abs(offset) >= SCORCH_HALF) {
                     continue;
                 }
                 int bits = OverlayRenderer.hash(st.seed() ^ (int) Math.floor((offset + centreAlong) * 16) * 0x9E3779B9
@@ -408,15 +417,22 @@ final class DecalRenderer {
                 int reach = (int) Math.round(STREAK_PX * (1 - Math.hypot(offset, fixed - centreFixed) / SCORCH_HALF));
                 int split = height < 2 ? height : Math.clamp(height / 2 + ragged(bits), 1, height - 1);
                 int down = Math.min(split, reach + ragged(bits >>> 8)), up = Math.min(height - split, reach + ragged(bits >>> 16));
-                for (FloatArrayList out : outs) {
-                    drawn |= streak(out, block, face, plane, a0, a1,
-                            Math.max(bottom, (float) (highSurface - y - down / 16.0)), roof,
-                            texel(turn, alongX, offset, rowHigh, false), texel(turn, alongX, offset, rowHigh, true),
-                            cam, color, light);
-                    drawn |= streak(out, block, face, plane, a0, a1, bottom,
-                            Math.min(roof, (float) (lowSurface - y + up / 16.0)),
-                            texel(turn, alongX, offset, rowLow, false), texel(turn, alongX, offset, rowLow, true),
-                            cam, color, light);
+                // Each part of the wall's shape this pixel column crosses
+                for (float[] rect : rects) {
+                    if (a0 < rect[0] - 1.0e-4f || a1 > rect[1] + 1.0e-4f) {
+                        continue;
+                    }
+                    float bottom = (float) Math.max(rect[2], lowSurface - y), roof = (float) Math.min(rect[3], highSurface - y);
+                    for (FloatArrayList out : outs) {
+                        drawn |= streak(out, block, face, plane, a0, a1,
+                                Math.max(bottom, (float) (highSurface - y - down / 16.0)), roof,
+                                texel(turn, alongX, offset, rowHigh, false), texel(turn, alongX, offset, rowHigh, true),
+                                cam, color, light);
+                        drawn |= streak(out, block, face, plane, a0, a1, bottom,
+                                Math.min(roof, (float) (lowSurface - y + up / 16.0)),
+                                texel(turn, alongX, offset, rowLow, false), texel(turn, alongX, offset, rowLow, true),
+                                cam, color, light);
+                    }
                 }
             }
             if (drawn) {
@@ -456,25 +472,27 @@ final class DecalRenderer {
             BlockPos block = new BlockPos(x, y, z);
             BlockPos air = block.relative(face);
             DecalTracker.Key wall = new DecalTracker.Key(block.asLong(), face);
-            float[] rect = faceRect(level, block, face, plane);
-            if (rect == null || WALLS_TAKEN.contains(wall) || st.gone().contains(block.asLong())
+            List<float[]> rects = faceRects(level, block, face, plane);
+            if (rects.isEmpty() || WALLS_TAKEN.contains(wall) || st.gone().contains(block.asLong())
                     || level.getBlockState(air).isCollisionShapeFullBlock(level, air)) {
                 continue;
             }
-            float b0 = (float) Math.max(rect[2], from - y), b1 = (float) Math.min(rect[3], to - y);
-            if (b1 <= b0) {
-                continue;
-            }
             int light = OverlayRenderer.packedLight(level, air);
-            for (FloatArrayList out : (fused(level, block) ? SAND : SOIL)[variant]) {
-                for (int c = 0; c < 4; c++) {
-                    float a = c == 1 || c == 2 ? rect[1] : rect[0], b = c >= 2 ? b1 : b0;
-                    double offset = blockAlong + (acrossPositive ? a : 1 - a) - centreAlong;
-                    double row = fixed + away * Math.abs(y + b - edge) - centreFixed;
-                    vertex(out, block, face, plane, a, b, cam, SCORCH_LIFT, texel(turn, alongX, offset, row, false),
-                            texel(turn, alongX, offset, row, true), color);
+            for (float[] rect : rects) {
+                float b0 = (float) Math.max(rect[2], from - y), b1 = (float) Math.min(rect[3], to - y);
+                if (b1 <= b0) {
+                    continue;
                 }
-                end(out, face, light);
+                for (FloatArrayList out : (fused(level, block) ? SAND : SOIL)[variant]) {
+                    for (int c = 0; c < 4; c++) {
+                        float a = c == 1 || c == 2 ? rect[1] : rect[0], b = c >= 2 ? b1 : b0;
+                        double offset = blockAlong + (acrossPositive ? a : 1 - a) - centreAlong;
+                        double row = fixed + away * Math.abs(y + b - edge) - centreFixed;
+                        vertex(out, block, face, plane, a, b, cam, SCORCH_LIFT, texel(turn, alongX, offset, row, false),
+                                texel(turn, alongX, offset, row, true), color);
+                    }
+                    end(out, face, light);
+                }
             }
             WALLS_TAKEN.add(wall);
         }
@@ -511,8 +529,8 @@ final class DecalRenderer {
 
     /**
      * The part of a mark centred at (ca, cb) in block's face coordinates that lies on the given surface plane of that
-     * block: the whole of the block's shape in that plane, with the mark's texture laid over it and the texture's
-     * clear margin over the rest. So marks that overlap on a face have the same quads and blend instead of fighting
+     * block: each part of the block's shape in that plane whole, with the mark's texture laid over it and the
+     * texture's clear margin over the rest. So marks that overlap on a face have the same quads and blend instead of fighting
      * over depth. Skipped when the mark does not reach the face, the block changed since the mark was made (gone), or
      * the face is covered by a full block in front of it. turn turns and mirrors the texture (see markTex).
      */
@@ -522,8 +540,8 @@ final class DecalRenderer {
         if (ca + half <= 0 || ca - half >= 1 || cb + half <= 0 || cb - half >= 1 || gone.contains(block.asLong())) {
             return;
         }
-        float[] shape = faceRect(level, block, face, surface);
-        if (shape == null) {
+        List<float[]> shapes = faceRects(level, block, face, surface);
+        if (shapes.isEmpty()) {
             return;
         }
         BlockPos air = block.relative(face);
@@ -533,12 +551,14 @@ final class DecalRenderer {
         // Lit by the lightmap like the block under it; glowing parts (embers) stay bright in the dark
         int color = OverlayRenderer.argb(alpha, 0xFFFFFF, OverlayRenderer.lit || glow ? 1 : faceShade(face));
         int light = glow ? OverlayRenderer.FULL_BRIGHT : OverlayRenderer.packedLight(level, air);
-        for (int c = 0; c < 4; c++) {
-            float a = c == 1 || c == 2 ? shape[1] : shape[0], b = c >= 2 ? shape[3] : shape[2];
-            vertex(out, block, face, surface, a, b, cam, lift, markTex(turn, a - ca, cb - b, half + 1, false),
-                    markTex(turn, a - ca, cb - b, half + 1, true), color);
+        for (float[] shape : shapes) {
+            for (int c = 0; c < 4; c++) {
+                float a = c == 1 || c == 2 ? shape[1] : shape[0], b = c >= 2 ? shape[3] : shape[2];
+                vertex(out, block, face, surface, a, b, cam, lift, markTex(turn, a - ca, cb - b, half + 1, false),
+                        markTex(turn, a - ca, cb - b, half + 1, true), color);
+            }
+            end(out, face, light);
         }
-        end(out, face, light);
     }
 
     /**
@@ -556,29 +576,51 @@ final class DecalRenderer {
     }
 
     /**
-     * Face-coordinate rectangle {a0, a1, b0, b1} covered by the parts of block's shape whose side toward face lies
-     * in the surface plane (block-local coordinate along the face normal); null when no part does.
+     * Face-coordinate rectangles {a0, a1, b0, b1} of the parts of block's shape whose side toward face lies in the
+     * surface plane (block-local coordinate along the face normal), one per box of the shape, so an L-shaped side or
+     * a fence's rails are covered without the gaps between them.
      */
-    static float[] faceRect(Level level, BlockPos block, Direction face, double surface) {
+    static List<float[]> faceRects(Level level, BlockPos block, Direction face, double surface) {
+        List<float[]> rects = new ArrayList<>(2);
         BlockState state = level.getBlockState(block);
         if (state.isAir() || state.getBlock() instanceof BaseFireBlock) {
-            return null;
+            return rects;
         }
         Direction.Axis axis = face.getAxis();
         boolean positive = face.getAxisDirection() == Direction.AxisDirection.POSITIVE;
         Direction t1 = across(face), t2 = up(face);
-        float a0 = 1, a1 = 0, b0 = 1, b1 = 0;
         for (AABB box : state.getShape(level, block).toAabbs()) {
             double side = positive ? box.max(axis) : box.min(axis);
-            if (Math.abs(side - surface) > 1.0e-3) {
-                continue;
+            if (Math.abs(side - surface) <= 1.0e-3) {
+                rects.add(new float[] {low(box, t1), high(box, t1), low(box, t2), high(box, t2)});
             }
-            a0 = Math.min(a0, low(box, t1));
-            a1 = Math.max(a1, high(box, t1));
-            b0 = Math.min(b0, low(box, t2));
-            b1 = Math.max(b1, high(box, t2));
         }
-        return a1 > a0 && b1 > b0 ? new float[] {a0, a1, b0, b1} : null;
+        return rects;
+    }
+
+    /** The rectangle round all of faceRects; null when there are none. */
+    static float[] faceRect(Level level, BlockPos block, Direction face, double surface) {
+        float[] all = null;
+        for (float[] r : faceRects(level, block, face, surface)) {
+            all = all == null ? r.clone()
+                    : new float[] {Math.min(all[0], r[0]), Math.max(all[1], r[1]), Math.min(all[2], r[2]), Math.max(all[3], r[3])};
+        }
+        return all;
+    }
+
+    /** The heights (0..1) of the top faces of block's shape, each once. */
+    private static DoubleArrayList tops(Level level, BlockPos block) {
+        DoubleArrayList heights = new DoubleArrayList(2);
+        for (AABB box : level.getBlockState(block).getShape(level, block).toAabbs()) {
+            boolean seen = false;
+            for (int i = 0; i < heights.size(); i++) {
+                seen |= Math.abs(heights.getDouble(i) - box.maxY) <= 1.0e-3;
+            }
+            if (!seen) {
+                heights.add(box.maxY);
+            }
+        }
+        return heights;
     }
 
     private static float low(AABB box, Direction t) {
