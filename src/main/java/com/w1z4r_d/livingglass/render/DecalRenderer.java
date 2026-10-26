@@ -330,6 +330,8 @@ final class DecalRenderer {
                             continue;
                         }
                         BlockPos block = new BlockPos(ground.getX() + dx, groundY + k, ground.getZ() + dz);
+                        // The struck column's posts are charred all the way up, others smoke from the ground
+                        sides(level, variant, st, turn, block, surface[i], dx == 0 && dz == 0 ? 0.15 : 0.6, cam, fade);
                         // Every top of its shape: both treads of a stair, a fence post and its rails
                         for (double local : tops(level, block)) {
                             for (FloatArrayList out : (fused(level, block) ? SAND : SOIL)[variant]) {
@@ -495,6 +497,47 @@ final class DecalRenderer {
                 }
             }
             WALLS_TAKEN.add(wall);
+        }
+    }
+
+    /**
+     * Soot on the side faces inside a block's cell (fence posts and rails, the riser of a stair) of a column the mark
+     * lies on. A point at some height over the column's ground takes the mark from that far out along the ground,
+     * times rise, away from the strike: soot climbing up from the ground and thinning with height.
+     */
+    private static void sides(Level level, int variant, DecalTracker.Strike st, int turn, BlockPos block, double ground,
+                              double rise, Vec3 cam, float fade) {
+        if (st.gone().contains(block.asLong())) {
+            return;
+        }
+        int light = OverlayRenderer.packedLight(level, block);
+        for (AABB box : level.getBlockState(block).getShape(level, block).toAabbs()) {
+            for (Direction face : Direction.Plane.HORIZONTAL) {
+                boolean positive = face.getAxisDirection() == Direction.AxisDirection.POSITIVE;
+                double plane = positive ? box.max(face.getAxis()) : box.min(face.getAxis());
+                if (plane < 1.0e-3 || plane > 1 - 1.0e-3) {
+                    continue; // on the cell's edge: a wall between columns, or against the next block
+                }
+                Direction across = across(face);
+                float a0 = low(box, across), a1 = high(box, across), b0 = (float) box.minY, b1 = (float) box.maxY;
+                int color = OverlayRenderer.argb(fade, 0xFFFFFF, OverlayRenderer.lit ? 1 : faceShade(face));
+                for (FloatArrayList out : (fused(level, block) ? SAND : SOIL)[variant]) {
+                    for (int c = 0; c < 4; c++) {
+                        float a = c == 1 || c == 2 ? a1 : a0, b = c >= 2 ? b1 : b0;
+                        double[] local = new double[3];
+                        local[face.getAxis().ordinal()] = plane;
+                        place(local, across, a);
+                        double ox = block.getX() + local[0] - st.x(), oz = block.getZ() + local[2] - st.z();
+                        double far = Math.hypot(ox, oz);
+                        double reach = Math.min(far + rise * Math.max(0, block.getY() + b - ground), SCORCH_HALF + 0.95);
+                        double ux = far > 1.0e-3 ? ox / far : face.getStepX(), uz = far > 1.0e-3 ? oz / far : face.getStepZ();
+                        vertex(out, block, face, plane, a, b, cam, SCORCH_LIFT,
+                                markTex(turn, ux * reach, uz * reach, SCORCH_HALF + 1, false),
+                                markTex(turn, ux * reach, uz * reach, SCORCH_HALF + 1, true), color);
+                    }
+                    end(out, face, light);
+                }
+            }
         }
     }
 
