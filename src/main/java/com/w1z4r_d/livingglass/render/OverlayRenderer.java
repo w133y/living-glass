@@ -60,7 +60,7 @@ public final class OverlayRenderer {
     /** Light and window merging change slowly, so they are recomputed this often instead of every frame. */
     private static final int RENDER_CACHE_TICKS = 20;
     /** Floats per quad: four vertices of x, y, z, u, v, colour, then normal x, y, z and the packed light. */
-    private static final int STRIDE = 28;
+    static final int STRIDE = 28;
 
     /** Texture variants per window-frame mask: bit 1 left, 2 right, 4 bottom, 8 top edge is the frame. */
     private static final int MASKS = 16;

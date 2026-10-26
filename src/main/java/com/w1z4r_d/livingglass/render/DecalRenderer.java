@@ -41,7 +41,7 @@ final class DecalRenderer {
      * meet at an outside edge close up with no gap.
      */
     private static final double ASH_LIFT = 0, SCORCH_LIFT = 0.001, SNOW_LIFT = 0.002, EMBER_LIFT = 0.003;
-    /** About the angle one screen pixel covers, in radians, for the slant term of the lift (see vertex). */
+    /** About the angle one screen pixel covers, in radians, for the lift of solid decals seen at a slant (see slant). */
     private static final double PIXEL_ANGLE = 0.0025;
     /**
      * A snow splat is 10 pixels wide, at the same pixel size as the block textures, and a lightning scorch 64 pixels,
@@ -160,11 +160,32 @@ final class DecalRenderer {
             if (OverlayRenderer.lit) {
                 // Solid, so the pack draws it before it works out reflections, and tagged as an ender pearl for packs
                 // that give built-in materials to what they know: theirs is mirror-smooth whatever its colour
+                slant(quads);
                 ShaderPacks.submitAs("ender_pearl", () -> OverlayRenderer.submitSolid(collector, poseStack, glass, quads));
             } else {
                 OverlayRenderer.submitDecal(collector, poseStack, glass, quads);
             }
             OverlayRenderer.submitDecal(collector, poseStack, "lightning_embers_" + i, emberLists[i]);
+        }
+    }
+
+    /**
+     * Pulls solid decal quads further toward the eye the more slanted their face is seen, by about a pixel's worth of
+     * its depth. Solid render types have no depth bias of their own, and packs jitter the terrain by part of a pixel
+     * but not entities, so a solid decal seen at a slant would flicker with the ground under it.
+     */
+    private static void slant(FloatArrayList quads) {
+        float[] e = quads.elements();
+        for (int q = 0; q + OverlayRenderer.STRIDE <= quads.size(); q += OverlayRenderer.STRIDE) {
+            float nx = e[q + 24], ny = e[q + 25], nz = e[q + 26];
+            for (int v = q; v < q + 24; v += 6) {
+                double distance = Math.sqrt(e[v] * e[v] + e[v + 1] * e[v + 1] + e[v + 2] * e[v + 2]);
+                double facing = Math.max(0.02, Math.abs(e[v] * nx + e[v + 1] * ny + e[v + 2] * nz) / distance);
+                double keep = Math.max(0, 1 - PIXEL_ANGLE * Math.sqrt(1 - facing * facing) / facing);
+                e[v] *= (float) keep;
+                e[v + 1] *= (float) keep;
+                e[v + 2] *= (float) keep;
+            }
         }
     }
 
@@ -502,8 +523,8 @@ final class DecalRenderer {
 
     /**
      * Soot on the side faces inside a block's cell (fence posts and rails, the riser of a stair) of a column the mark
-     * lies on. A point at some height over the column's ground takes the mark from that far out along the ground,
-     * times rise, away from the strike: soot climbing up from the ground and thinning with height.
+     * lies on. Each face takes the mark from along the ground straight away from the strike, as far out as its points
+     * are high over the column's ground, times rise: soot climbing up from the ground and thinning with height.
      */
     private static void sides(Level level, int variant, DecalTracker.Strike st, int turn, BlockPos block, double ground,
                               double rise, Vec3 cam, float fade) {
@@ -511,6 +532,7 @@ final class DecalRenderer {
             return;
         }
         int light = OverlayRenderer.packedLight(level, block);
+        double edge = SCORCH_HALF + 0.95; // past the mark, short of where its texture would wrap round
         for (AABB box : level.getBlockState(block).getShape(level, block).toAabbs()) {
             for (Direction face : Direction.Plane.HORIZONTAL) {
                 boolean positive = face.getAxisDirection() == Direction.AxisDirection.POSITIVE;
@@ -520,20 +542,37 @@ final class DecalRenderer {
                 }
                 Direction across = across(face);
                 float a0 = low(box, across), a1 = high(box, across), b0 = (float) box.minY, b1 = (float) box.maxY;
+                // The face's two ends from the strike point, on the ground; sampled half a texel in from the face, as
+                // the face itself lies on a texel edge
+                double[] ends = new double[4];
+                for (int e = 0; e < 2; e++) {
+                    double[] local = new double[3];
+                    local[face.getAxis().ordinal()] = plane - (positive ? 0.5 : -0.5) / 16;
+                    place(local, across, e == 0 ? a0 : a1);
+                    ends[e * 2] = block.getX() + local[0] - st.x();
+                    ends[e * 2 + 1] = block.getZ() + local[2] - st.z();
+                }
+                double far = Math.max(Math.hypot(ends[0], ends[1]), Math.hypot(ends[2], ends[3]));
+                if (far >= edge) {
+                    continue;
+                }
+                // One way for the whole face, so its texture stays flat: out from the strike through its middle
+                double mx = (ends[0] + ends[2]) / 2, mz = (ends[1] + ends[3]) / 2, m = Math.hypot(mx, mz);
+                double dx = m > 1.0e-3 ? mx / m : face.getStepX(), dz = m > 1.0e-3 ? mz / m : face.getStepZ();
+                b1 = (float) Math.min(b1, ground - block.getY() + (edge - far) / rise);
+                if (b1 <= b0) {
+                    continue;
+                }
                 int color = OverlayRenderer.argb(fade, 0xFFFFFF, OverlayRenderer.lit ? 1 : faceShade(face));
                 for (FloatArrayList out : (fused(level, block) ? SAND : SOIL)[variant]) {
                     for (int c = 0; c < 4; c++) {
-                        float a = c == 1 || c == 2 ? a1 : a0, b = c >= 2 ? b1 : b0;
-                        double[] local = new double[3];
-                        local[face.getAxis().ordinal()] = plane;
-                        place(local, across, a);
-                        double ox = block.getX() + local[0] - st.x(), oz = block.getZ() + local[2] - st.z();
-                        double far = Math.hypot(ox, oz);
-                        double reach = Math.min(far + rise * Math.max(0, block.getY() + b - ground), SCORCH_HALF + 0.95);
-                        double ux = far > 1.0e-3 ? ox / far : face.getStepX(), uz = far > 1.0e-3 ? oz / far : face.getStepZ();
-                        vertex(out, block, face, plane, a, b, cam, SCORCH_LIFT,
-                                markTex(turn, ux * reach, uz * reach, SCORCH_HALF + 1, false),
-                                markTex(turn, ux * reach, uz * reach, SCORCH_HALF + 1, true), color);
+                        int e = c == 1 || c == 2 ? 1 : 0;
+                        float b = c >= 2 ? b1 : b0;
+                        double away = rise * Math.abs(block.getY() + b - ground);
+                        double qx = ends[e * 2] + dx * away, qz = ends[e * 2 + 1] + dz * away;
+                        vertex(out, block, face, plane, e == 0 ? a0 : a1, b, cam, SCORCH_LIFT,
+                                markTex(turn, qx, qz, SCORCH_HALF + 1, false), markTex(turn, qx, qz, SCORCH_HALF + 1, true),
+                                color);
                     }
                     end(out, face, light);
                 }
@@ -634,11 +673,31 @@ final class DecalRenderer {
         Direction t1 = across(face), t2 = up(face);
         for (AABB box : state.getShape(level, block).toAabbs()) {
             double side = positive ? box.max(axis) : box.min(axis);
-            if (Math.abs(side - surface) <= 1.0e-3) {
+            if (Math.abs(side - surface) <= 1.0e-3 && !(atBoundary(face, surface) && pressed(level, block, face, box))) {
                 rects.add(new float[] {low(box, t1), high(box, t1), low(box, t2), high(box, t2)});
             }
         }
         return rects;
+    }
+
+    /** Whether the side of box toward face is pressed against a part of the next block, like a post on a post. */
+    private static boolean pressed(Level level, BlockPos block, Direction face, AABB box) {
+        BlockPos next = block.relative(face);
+        Direction.Axis axis = face.getAxis();
+        boolean positive = face.getAxisDirection() == Direction.AxisDirection.POSITIVE;
+        for (AABB other : level.getBlockState(next).getShape(level, next).toAabbs()) {
+            if ((positive ? other.min(axis) : 1 - other.max(axis)) > 1.0e-3) {
+                continue;
+            }
+            boolean covers = true;
+            for (Direction.Axis in : Direction.Axis.values()) {
+                covers &= in == axis || other.min(in) <= box.min(in) + 1.0e-3 && other.max(in) >= box.max(in) - 1.0e-3;
+            }
+            if (covers) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** The rectangle round all of faceRects; null when there are none. */
@@ -710,11 +769,7 @@ final class DecalRenderer {
         place(local, up(face), b);
         double x = pos.getX() + local[0] - cam.x, y = pos.getY() + local[1] - cam.y, z = pos.getZ() + local[2] - cam.z;
         double distance = Math.sqrt(x * x + y * y + z * z);
-        // Seen at a slant a pixel spans more depth, and packs jitter the terrain by part of a pixel but not entities:
-        // pull further in by about a pixel's worth of the face's depth, which still lifts it only a hair off the face
-        double facing = Math.max(0.02, Math.abs(x * face.getStepX() + y * face.getStepY() + z * face.getStepZ()) / distance);
-        double slant = PIXEL_ANGLE * distance * Math.sqrt(1 - facing * facing) / facing;
-        double keep = Math.max(0, 1 - (lift * Math.max(1, distance / 8) + slant) / distance);
+        double keep = Math.max(0, 1 - lift * Math.max(1, distance / 8) / distance);
         out.add((float) (x * keep));
         out.add((float) (y * keep));
         out.add((float) (z * keep));
