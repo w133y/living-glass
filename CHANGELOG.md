@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.1
+
+**Fixes**
+- Outside ice stays where it is when glass below or above it is broken or built, instead of jumping up or down.
+- Glass broken and put back starts clear outside; the ice grows on it again only while it snows.
+- Ice wraps round the side of a glass block next to a pane, so it runs on into the pane's ice without a gap.
+
 ## 1.1.0
 
 **New**
