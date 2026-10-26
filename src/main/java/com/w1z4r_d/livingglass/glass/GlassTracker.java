@@ -49,6 +49,10 @@ public final class GlassTracker {
     private static final float MIN_WET_SPAN = 0.2f;
     /** Inside fog target at which the outside ice forms at its fastest pace. */
     private static final float ICE_FULLY_FOGGED = 0.5f;
+    /** How far past the top of the window the ice front has to climb before the frost covers it all, in blocks. */
+    private static final float ICE_OVERSHOOT = 0.4f;
+    /** How far neighbouring windows are followed when merging a large window into one surface. */
+    private static final int MAX_RUN = 8;
     private static final float BREATH_BUILD_SECONDS = 3;
     private static final float BREATH_FADE_SECONDS = 10;
     private static final double BREATH_DISTANCE = 1.5;
@@ -67,6 +71,8 @@ public final class GlassTracker {
     private final Climate climate = new Climate();
     private final LongArrayFIFOQueue pending = new LongArrayFIFOQueue();
     private final LongOpenHashSet pendingSet = new LongOpenHashSet();
+    /** Glass just put in, which starts clear outside instead of taking the window's ice. */
+    private final LongOpenHashSet placed = new LongOpenHashSet();
 
     private Level level;
     private long tick;
@@ -88,17 +94,27 @@ public final class GlassTracker {
         climate.clear();
         pending.clear();
         pendingSet.clear();
+        placed.clear();
         sweepIndex = 0;
     }
 
     /** A block changed: recheck glass around it, including the column below (roof blocks). */
-    public void onBlockChanged(BlockPos pos) {
+    public void onBlockChanged(BlockPos pos, BlockState oldState, BlockState newState) {
         // Farms, redstone and growing crops change blocks all over the loaded world; only nearby changes matter
         Player player = Minecraft.getInstance().player;
         LivingGlassConfig cfg = LivingGlassConfig.get();
         int reach = cfg.scan.radius + 16;
         if (level == null || player == null || !cfg.enabled || player.blockPosition().distSqr(pos) > (double) reach * reach) {
             return;
+        }
+        if (isGlass(oldState) != isGlass(newState)) {
+            // Glass broken or put in: what it had is gone for good, even if the player puts it back straight away
+            long key = pos.asLong();
+            states.remove(key);
+            parked.remove(key);
+            if (isGlass(newState)) {
+                placed.add(key);
+            }
         }
         climate.invalidate(pos, cfg.climate.heatScanRadius);
         for (int dx = -2; dx <= 2; dx++) {
@@ -181,6 +197,7 @@ public final class GlassTracker {
 
     private void refresh(BlockPos pos) {
         long key = pos.asLong();
+        boolean fresh = placed.remove(key);
         if (!level.isLoaded(pos)) {
             GlassState left = states.remove(key);
             if (left != null) {
@@ -214,7 +231,7 @@ public final class GlassTracker {
         if (!states.containsKey(key)) {
             if (makeRoom(key)) {
                 if (!back) {
-                    inheritFromWindow(pos, gs);
+                    inheritFromWindow(pos, gs, fresh);
                 }
                 states.put(key, gs);
             } else if (back) {
@@ -224,10 +241,11 @@ public final class GlassTracker {
     }
 
     /**
-     * New glass in an existing window takes over its neighbours' fog, frost and ice, so the window keeps freezing
-     * as one surface instead of the new block starting from clear glass.
+     * Glass newly tracked in an existing window takes over its neighbours' fog, frost and ice, so the window keeps
+     * freezing as one surface instead of the block starting from clear glass. Glass the player just put in (fresh)
+     * only takes the fog and frost of the room: the ice outside has to grow on it again.
      */
-    private void inheritFromWindow(BlockPos pos, GlassState gs) {
+    private void inheritFromWindow(BlockPos pos, GlassState gs, boolean fresh) {
         if (!gs.isWindow()) {
             return;
         }
@@ -237,7 +255,10 @@ public final class GlassTracker {
             if (other != null && other.inner == gs.inner) {
                 gs.fog = Math.max(gs.fog, other.fog);
                 gs.frost = Math.max(gs.frost, other.frost);
-                gs.ice = Math.max(gs.ice, other.ice);
+                if (!fresh && other.ice > gs.ice) {
+                    gs.ice = other.ice;
+                    gs.iceFront = other.iceFront + n.getY() - pos.getY();
+                }
             }
         }
     }
@@ -490,11 +511,31 @@ public final class GlassTracker {
             // Outside ice forms faster on glass that fogs from inside, sliding smoothly between the two paces by how
             // much the room fogs the glass (the target, so all blocks of a window freeze together)
             double fogged = Math.min(1, gs.fogTarget / ICE_FULLY_FOGGED);
+            float was = gs.ice;
             gs.ice = approach(gs.ice, gs.iceTarget, t.iceBuildSeconds + (t.iceFoggedSeconds - t.iceBuildSeconds) * fogged,
                     t.frostMeltSeconds);
+            moveIceFront(gs, was);
         }
         if (cfg.breathSpot.enabled) {
             breathe(Minecraft.getInstance().player, cfg);
+        }
+    }
+
+    /**
+     * Moves the outside ice front along with the ice: up toward the top of the window while it grows and down toward
+     * its bottom while it melts, by the same share of the way left as the ice moved, so it gets there just as the ice
+     * does. Only the way left depends on the window's size, so breaking or adding glass never makes the frost jump.
+     */
+    private static void moveIceFront(GlassState gs, float was) {
+        float top = gs.above + 1 + ICE_OVERSHOOT, bottom = -gs.below;
+        if (gs.ice <= 0) {
+            gs.iceFront = bottom;
+        } else if (gs.ice >= 1) {
+            gs.iceFront = top;
+        } else if (gs.ice > was) {
+            gs.iceFront += (top - gs.iceFront) * (gs.ice - was) / (1 - was);
+        } else if (gs.ice < was) {
+            gs.iceFront -= (gs.iceFront - bottom) * (was - gs.ice) / was;
         }
     }
 
@@ -559,6 +600,9 @@ public final class GlassTracker {
             gs.fogTarget = gs.frostTarget = gs.iceTarget = 0;
             return;
         }
+        // Also kept up to date here, not only while the window is drawn, so the ice climbs the whole window unseen too
+        gs.below = run(states, gs, pos, 0, -1, 0);
+        gs.above = run(states, gs, pos, 0, 1, 0);
         BlockPos outside = pos.relative(gs.inner.getOpposite());
         BlockPos inside = pos.relative(gs.inner);
         float temp = Climate.outsideTemp(level, outside, cfg.climate);
@@ -574,6 +618,21 @@ public final class GlassTracker {
         gs.warmth = warmth;
         gs.fogTarget = Math.min(1, coldness * warmth * (float) cfg.condensation.strength);
         gs.frostTarget = temp < Climate.FREEZING ? Climate.smoothstep(0.4f, 1.0f, coldness * warmth) : 0;
+    }
+
+    /** Counts contiguous windows facing the same room, starting next to pos and stepping by (sx, sy, sz). */
+    public static int run(Long2ObjectOpenHashMap<GlassState> states, GlassState gs, BlockPos pos, int sx, int sy, int sz) {
+        int n = 0;
+        while (n < MAX_RUN) {
+            int k = n + 1;
+            GlassState next = states.get(BlockPos.asLong(pos.getX() + sx * k, pos.getY() + sy * k, pos.getZ() + sz * k));
+            // Panes and full glass blocks in one row of the wall form a single window
+            if (next == null || next.inner != gs.inner) {
+                break;
+            }
+            n++;
+        }
+        return n;
     }
 
     /** Moves linearly toward target; a full 0..1 swing takes riseSeconds up or fallSeconds down. */

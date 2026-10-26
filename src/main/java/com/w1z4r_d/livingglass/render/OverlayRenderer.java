@@ -55,8 +55,6 @@ public final class OverlayRenderer {
     private static final float WIPE_RADIUS = 0.3f;
     private static final float BREATH_RADIUS = 0.35f;
     private static final float BREATH_ALPHA = 0.7f;
-    /** How far neighbouring windows are followed when merging a large window into one surface. */
-    private static final int MAX_RUN = 8;
     /** Light and window merging change slowly, so they are recomputed this often instead of every frame. */
     private static final int RENDER_CACHE_TICKS = 20;
     /** Floats per quad: four vertices of x, y, z, u, v, colour, then normal x, y, z and the packed light. */
@@ -74,8 +72,6 @@ public final class OverlayRenderer {
     private static final int ICE_SHEET = 8;
     private static final int ICE_STAGES = 4;
     private static final FloatArrayList[] iceSheet = lists(ICE_STAGES);
-    /** How far past the top of the window the front has to climb before the frost covers it all, in blocks. */
-    private static final float ICE_OVERSHOOT = 0.4f;
     /** How many pixels up or down a column of the ragged front may sit. */
     private static final float ICE_RAGGED = 1.5f;
     /** Reused for the dissolve between two growth stages; render runs on one thread. */
@@ -192,7 +188,7 @@ public final class OverlayRenderer {
                     roomSides(gs, p, cam, cfg, shade, light, below, above);
                 }
                 if (cfg.ice.enabled && gs.ice > 0.004f) {
-                    outsideIce(gs, p, cam, below, above);
+                    outsideIce(states, gs, p, cam);
                 }
                 if (cfg.debug) {
                     face(debug, p, gs.inner, gs, 0, 1, cam, 0, 0, 1, 1, 1, 0x00FF00, 1, FULL_BRIGHT, (x, y) -> 0.375f);
@@ -301,10 +297,12 @@ public final class OverlayRenderer {
 
     /**
      * Frost on the outside face of a window, cut from one seamless sheet by world position so the feathers run across
-     * block edges. It rises from the bottom of the whole window with a ragged front, one texture pixel per cell, and
-     * covers the window when fully grown. Between growth stages each cell switches to the denser sheet on its own.
+     * block edges. It rises from the bottom of the whole window with a ragged front (see GlassState.iceFront), one
+     * texture pixel per cell, and covers the window when fully grown. Between growth stages each cell switches to the
+     * denser sheet on its own. Beside a pane, which sits further back, it wraps round onto the outer part of the
+     * block's side face, mirrored at the corner, so it runs on into the pane's frost.
      */
-    private static void outsideIce(GlassState gs, BlockPos p, Vec3 cam, int below, int above) {
+    private static void outsideIce(Long2ObjectOpenHashMap<GlassState> states, GlassState gs, BlockPos p, Vec3 cam) {
         Direction out = gs.inner.getOpposite();
         Direction across = out.getClockWise();
         boolean acrossPositive = across.getAxisDirection() == Direction.AxisDirection.POSITIVE;
@@ -314,21 +312,38 @@ public final class OverlayRenderer {
         float vTop = (ICE_SHEET - 1 - Math.floorMod(p.getY(), ICE_SHEET)) / (float) ICE_SHEET;
         float tile = 1f / ICE_SHEET;
         float u0 = acrossPositive ? uBase : uBase + tile, u1 = acrossPositive ? uBase + tile : uBase;
-        float front = gs.ice * (below + 1 + above + ICE_OVERSHOOT);
         float seen = seenFrom(cam, p, out, gs);
-        AlphaField alpha = (x, y) -> {
+        AlphaField covered = (x, y) -> {
             // Ragged front: each pixel column of the window reaches a little higher or lower
             int column = Math.floorMod(along * 16 + (int) ((acrossPositive ? x : 1 - x) * 16), 1 << 20);
             float ragged = ((hash(column * 0x9E3779B9) & 7) - 3.5f) / 16 * ICE_RAGGED;
-            return below + y < front + ragged ? seen : 0;
+            return y < gs.iceFront + ragged ? 1 : 0;
         };
         float grown = Math.min(gs.ice * ICE_STAGES, ICE_STAGES - 0.001f);
         int stage = (int) grown;
         ICE_STEP.prevTex = stage;
         ICE_STEP.tex = Math.min(ICE_STAGES - 1, stage + 1);
         ICE_STEP.blend = grown - stage;
-        faceMelt(iceSheet[ICE_STEP.tex], ICE_STEP.tex == stage ? null : iceSheet[stage], ICE_STEP, p, out, gs, 0, 1, cam,
-                u0, vTop, u1, vTop + tile, GRID, 0xFFFFFF, lit ? 1 : gs.shadeOuter, lit ? gs.lightOuter : FULL_BRIGHT, alpha);
+        FloatArrayList list = iceSheet[ICE_STEP.tex], old = ICE_STEP.tex == stage ? null : iceSheet[stage];
+        float shade = lit ? 1 : gs.shadeOuter;
+        int light = lit ? gs.lightOuter : FULL_BRIGHT;
+        faceMelt(list, old, ICE_STEP, p, out, gs, 0, 1, cam, u0, vTop, u1, vTop + tile, GRID, 0xFFFFFF, shade, light,
+                (x, y) -> seen * covered.at(x, y));
+        if (gs.pane) {
+            return;
+        }
+        for (Direction side : new Direction[] {across, across.getOpposite()}) {
+            GlassState next = states.get(p.relative(side).asLong());
+            if (next == null || !next.pane || next.inner != gs.inner) {
+                continue;
+            }
+            // On either side face 1 - x is the outer face's x mirrored at the corner; the outer edge is at x = 0 on
+            // the across side and at x = 1 on the other, and the strip ends where the pane's face begins
+            boolean outerAtZero = side == across;
+            float seenSide = Math.min(seen, seenFrom(cam, p, side, gs));
+            faceMelt(list, old, ICE_STEP, p, side, gs, 0, 1, cam, u1, vTop, u0, vTop + tile, GRID, 0xFFFFFF, shade, light,
+                    (x, y) -> (outerAtZero ? x : 1 - x) < 0.5f - GlassState.PANE_HALF ? seenSide * covered.at(1 - x, y) : 0);
+        }
     }
 
     /** Draws the last fully grown stage plus the next one fading in, melting between textures with look. */
@@ -368,10 +383,10 @@ public final class OverlayRenderer {
             gs.lightOuter = packedLight(level, p.relative(gs.inner.getOpposite()));
             // Neighbouring windows of the same room merge into one surface
             int rx = -gs.inner.getStepZ(), rz = gs.inner.getStepX();
-            gs.below = run(states, gs, p, 0, -1, 0);
-            gs.above = run(states, gs, p, 0, 1, 0);
-            gs.left = run(states, gs, p, -rx, 0, -rz);
-            gs.right = run(states, gs, p, rx, 0, rz);
+            gs.below = GlassTracker.run(states, gs, p, 0, -1, 0);
+            gs.above = GlassTracker.run(states, gs, p, 0, 1, 0);
+            gs.left = GlassTracker.run(states, gs, p, -rx, 0, -rz);
+            gs.right = GlassTracker.run(states, gs, p, rx, 0, rz);
         }
         if (gs.rainTop) {
             gs.shadeTop = shade(level, p.above());
@@ -505,21 +520,6 @@ public final class OverlayRenderer {
         out.add(0.5f);
         out.add(0.5f);
         out.add(Float.intBitsToFloat(color));
-    }
-
-    /** Counts contiguous windows facing the same room, starting next to pos and stepping by (sx, sy, sz). */
-    private static int run(Long2ObjectOpenHashMap<GlassState> states, GlassState gs, BlockPos pos, int sx, int sy, int sz) {
-        int n = 0;
-        while (n < MAX_RUN) {
-            int k = n + 1;
-            GlassState next = states.get(BlockPos.asLong(pos.getX() + sx * k, pos.getY() + sy * k, pos.getZ() + sz * k));
-            // Panes and full glass blocks in one row of the wall form a single window
-            if (next == null || next.inner != gs.inner) {
-                break;
-            }
-            n++;
-        }
-        return n;
     }
 
     /** How much of the fog is wiped away at a point, 0..1. */

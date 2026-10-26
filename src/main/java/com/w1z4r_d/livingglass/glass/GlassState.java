@@ -39,6 +39,11 @@ public final class GlassState {
     public int tint;
 
     public float fog, frost, drops, ice;
+    /**
+     * How high the outside ice reaches, in blocks above this block's bottom (negative: not up to it yet). It moves
+     * with the ice but not with the window's size, so glass broken or built around it leaves the frost where it is.
+     */
+    public float iceFront;
     /** When the player left this window behind (System.nanoTime), so it can be restored if they come back soon. */
     public long parkedAt;
     public float fogTarget, frostTarget, dropTarget, iceTarget;

@@ -17,7 +17,7 @@ abstract class ClientLevelMixin {
     private void livingglass$onBlockChanged(BlockPos pos, BlockState oldState, BlockState newState, int flags,
                                             CallbackInfo ci) {
         if (oldState != newState) {
-            GlassTracker.INSTANCE.onBlockChanged(pos);
+            GlassTracker.INSTANCE.onBlockChanged(pos, oldState, newState);
             DecalTracker.INSTANCE.onBlockChanged(pos);
         }
     }
