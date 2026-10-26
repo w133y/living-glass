@@ -12,6 +12,7 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BaseFireBlock;
 import net.minecraft.world.level.block.state.BlockState;
@@ -52,6 +53,8 @@ final class DecalRenderer {
     private static final Direction[] PAIRS = {Direction.EAST, Direction.SOUTH};
     private static final FloatArrayList[] scorchLists = lists(LIGHTNING_VARIANTS);
     private static final FloatArrayList[] emberLists = lists(LIGHTNING_VARIANTS);
+    /** The burn mark on sand, fused into glass; its specular map makes it shine like metal under shader packs. */
+    private static final FloatArrayList[] glassLists = lists(LIGHTNING_VARIANTS);
     /** Wall faces a burn mark has been drawn on this frame. */
     private static final Set<DecalTracker.Key> WALLS_TAKEN = new HashSet<>();
     /** A splat fades out over the last quarter of its life. */
@@ -80,6 +83,9 @@ final class DecalRenderer {
             list.clear();
         }
         for (FloatArrayList list : emberLists) {
+            list.clear();
+        }
+        for (FloatArrayList list : glassLists) {
             list.clear();
         }
         DecalTracker decals = DecalTracker.INSTANCE;
@@ -125,6 +131,7 @@ final class DecalRenderer {
         }
         for (int i = 0; i < LIGHTNING_VARIANTS; i++) {
             OverlayRenderer.submitDecal(collector, poseStack, "lightning_scorch_" + i, scorchLists[i]);
+            OverlayRenderer.submitDecal(collector, poseStack, "lightning_glass_" + i, glassLists[i]);
             OverlayRenderer.submitDecal(collector, poseStack, "lightning_embers_" + i, emberLists[i]);
         }
     }
@@ -261,6 +268,7 @@ final class DecalRenderer {
      * A lightning burn mark projected from above onto the ground as it was at the strike: each column's part on its
      * top face then, and where neighbouring columns differ in height, on the side face of the step between them.
      * Embers glow on the top faces while the mark is fresh. Each strike turns and mirrors its texture its own way.
+     * On sand the mark is fused glass instead of soot.
      */
     private static void drawStrike(Level level, DecalTracker.Strike st, Vec3 cam, long age, long life) {
         if (age >= life) {
@@ -286,8 +294,8 @@ final class DecalRenderer {
                     float ca = (float) (st.x() - block.getX());
                     float cb = (float) (1 - (st.z() - block.getZ()));
                     double local = surface[i] - top[i];
-                    splatPart(level, scorchLists[variant], st.gone(), block, Direction.UP, ca, cb, local, cam, fade,
-                            SCORCH_HALF, turn, false, SCORCH_LIFT);
+                    splatPart(level, (fused(level, block) ? glassLists : scorchLists)[variant], st.gone(), block,
+                            Direction.UP, ca, cb, local, cam, fade, SCORCH_HALF, turn, false, SCORCH_LIFT);
                     if (glow > 0) {
                         splatPart(level, emberLists[variant], st.gone(), block, Direction.UP, ca, cb, local, cam, glow,
                                 SCORCH_HALF, turn, true, EMBER_LIFT);
@@ -306,7 +314,7 @@ final class DecalRenderer {
                     }
                     boolean here = surface[i] > surface[j];
                     int high = here ? i : j;
-                    drape(level, scorchLists[variant], st, turn, ground.getX() + (here ? dx : nx), top[high],
+                    drape(level, variant, st, turn, ground.getX() + (here ? dx : nx), top[high],
                             ground.getZ() + (here ? dz : nz), here ? dir : dir.getOpposite(), surface[here ? j : i],
                             surface[high], cam, fade);
                 }
@@ -322,7 +330,7 @@ final class DecalRenderer {
      * (an infinite surface: a cliff above, a drop below) sends no streak. Where two marks reach the same wall only
      * the newest is drawn on it, as their streaks would differ and flicker.
      */
-    private static void drape(Level level, FloatArrayList out, DecalTracker.Strike st, int turn, int x, int topY, int z,
+    private static void drape(Level level, int variant, DecalTracker.Strike st, int turn, int x, int topY, int z,
                               Direction face, double lowSurface, double highSurface, Vec3 cam, float fade) {
         Direction across = across(face);
         boolean alongX = across.getAxis() == Direction.Axis.X;
@@ -355,6 +363,7 @@ final class DecalRenderer {
                 continue;
             }
             int light = OverlayRenderer.packedLight(level, air);
+            FloatArrayList out = (fused(level, block) ? glassLists : scorchLists)[variant];
             float bottom = (float) Math.max(rect[2], lowSurface - y), roof = (float) Math.min(rect[3], highSurface - y);
             boolean drawn = false;
             for (int k = 0; k < 16; k++) {
@@ -406,6 +415,11 @@ final class DecalRenderer {
     /** Scorch texture coordinate of the texel at offset along a wall and row across it from the strike point. */
     private static float texel(int turn, boolean alongX, double offset, double row, boolean wantV) {
         return markTex(turn, alongX ? offset : row, alongX ? row : offset, SCORCH_HALF + 1, wantV);
+    }
+
+    /** Lightning fuses sand into glass rather than charring it. */
+    private static boolean fused(Level level, BlockPos block) {
+        return level.getBlockState(block).is(BlockTags.SAND);
     }
 
     /** -2 to 2 pixels, from the low bits. */

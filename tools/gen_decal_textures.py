@@ -9,6 +9,9 @@ snow_{variant}: a 10x10 snowball splat (10/16 of a block).
 lightning_scorch_{variant}: a 64x64 burn mark spanning 4x4 blocks where lightning struck, in LIGHTNING_VARIANTS
 styles that differ in size, shape and cracks.
 lightning_embers_{variant}: the glowing cinders drawn over it while it is fresh.
+lightning_glass_{variant}: the same mark where lightning struck sand and fused it into glass (fulgurite), with a
+LabPBR specular map lightning_glass_{variant}_s that shader packs read through Iris: the glassy heart is smooth
+metal, the sintered rim rougher glass.
 Splats and burn marks sit in the middle of a sheet with a clear margin one block wide, so a block face the mark only
 touches can take the sheet over the whole face: marks that overlap on a face then share their quads and blend
 instead of flickering.
@@ -28,6 +31,12 @@ VARIANTS = 3
 SOOT = [(70, 60, 52, 120), (48, 42, 37, 175), (33, 29, 26, 205), (22, 19, 17, 220)]
 SNOW = [(255, 255, 255, 255), (240, 246, 248, 255), (219, 230, 236, 255), (194, 208, 216, 255)]
 EMBERS = [(255, 214, 110, 255), (255, 150, 40, 255), (200, 70, 20, 255)]
+# Fused sand from the rim to the glassy heart, a glint on the glass, and their LabPBR specular values
+# (red: smoothness, green: 230 = iron, so metallic, below 230 = how much a non-metal reflects, alpha 255: no glow)
+FUSED = [(176, 160, 118, 110), (142, 128, 96, 165), (98, 96, 80, 215), (60, 62, 56, 235)]
+GLINT = (214, 222, 214, 235)
+FUSED_SPECULAR = [(90, 20, 0, 255), (150, 60, 0, 255), (215, 230, 0, 255), (245, 230, 0, 255)]
+GLINT_SPECULAR = (255, 230, 0, 255)
 
 
 def smooth(rnd, size, cells, amp):
@@ -181,4 +190,28 @@ for variant, (heart, rings, noise, stretch, arms_range, length_range, width, for
                 embers.putpixel((x + M, y + M), EMBERS[0 if r < heart * 0.45 else 1 if rnd.random() < 0.6 else 2])
     img.save(f"{out}/lightning_scorch_{variant}.png")
     embers.save(f"{out}/lightning_embers_{variant}.png")
+
+    # The same mark fused into glass, with short diagonal glints on the glassy heart like vanilla glass
+    glints = set()
+    grnd = random.Random(53 + variant * 977)
+    for _ in range(grnd.randint(3, 5)):
+        while True:
+            x, y = grnd.randrange(L), grnd.randrange(L)
+            if mark[y][x] == 3:
+                break
+        for i in range(grnd.randint(2, 3)):
+            if 0 <= x + i < L and 0 <= y - i < L and mark[y - i][x + i] >= 2:
+                glints.add((x + i, y - i))
+    glass = Image.new("RGBA", (L + 2 * M, L + 2 * M), (0, 0, 0, 0))
+    specular = Image.new("RGBA", (L + 2 * M, L + 2 * M), (0, 0, 0, 0))
+    for y in range(L):
+        for x in range(L):
+            level = mark[y][x]
+            if level < 0:
+                continue
+            glint = (x, y) in glints
+            glass.putpixel((x + M, y + M), GLINT if glint else FUSED[level])
+            specular.putpixel((x + M, y + M), GLINT_SPECULAR if glint else FUSED_SPECULAR[level])
+    glass.save(f"{out}/lightning_glass_{variant}.png")
+    specular.save(f"{out}/lightning_glass_{variant}_s.png")
 print("ok")
