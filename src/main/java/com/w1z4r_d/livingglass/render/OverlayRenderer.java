@@ -71,7 +71,7 @@ public final class OverlayRenderer {
     private static final int FROST_STAGES = 4;
     private static final FloatArrayList[] frost = lists(VARIANTS * MASKS * FROST_STAGES);
     /** Outside frost: one seamless sheet over ICE_SHEET x ICE_SHEET blocks, in ICE_STAGES growth stages. */
-    private static final int ICE_SHEET = 4;
+    private static final int ICE_SHEET = 8;
     private static final int ICE_STAGES = 4;
     private static final FloatArrayList[] iceSheet = lists(ICE_STAGES);
     /** How far past the top of the window the front has to climb before the frost covers it all, in blocks. */

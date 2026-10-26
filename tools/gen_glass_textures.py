@@ -4,7 +4,7 @@
 noise. VARIANTS random variants. One texture per frame mask (bit 1 left, 2 right, 4 bottom, 8 top = that side of
 the block is the frame of the whole merged window), so large windows are dense along their border only.
 Frost has 4 growth stages per mask; each stage is a superset of the previous one. Outside frost is a separate
-seamless 64x64 sheet (ice_sheet_{stage}) sampled by world position.
+seamless 128x128 sheet (ice_sheet_{stage}, 8x8 blocks) sampled by world position.
 """
 import math
 import os
@@ -112,13 +112,13 @@ def frost(mask, stage, fern, rag):
 
 
 def ice_sheet():
-    """Outside frost as one seamless 64x64 sheet (4x4 blocks) that windows sample by world position, so feathers run
+    """Outside frost as one seamless 128x128 sheet (8x8 blocks, so big windows show no repeat) that windows sample by world position, so feathers run
     across block edges like on a real pane: long curved fronds with fine barbs over a grainy rime. Returns one image
     per growth stage; each stage adds feathers to the previous one and thickens the rime."""
-    L = 64
+    L = 128
     rnd = random.Random(4242)
     # Rime in soft patches (clustered noise over the whole sheet, wrapping round so it tiles)
-    cells = 8
+    cells = L // 8
     g = [[rnd.random() for _ in range(cells)] for _ in range(cells)]
     grain = [[0.0] * L for _ in range(L)]
     for y in range(L):
@@ -138,7 +138,7 @@ def ice_sheet():
             order[py][px] = stage
             tone[py][px] = colour
 
-    count = 26
+    count = 104  # same density as before over four times the area
     for i in range(count):
         stage = min(3, i * 4 // count)
         x, y = rnd.uniform(0, L), rnd.uniform(0, L)

@@ -509,6 +509,17 @@ final class DecalRenderer {
     }
 
     private static void end(FloatArrayList out, Direction face, int light) {
+        if (face.getAxis().isHorizontal()) {
+            // Wall faces run "across" clockwise, which winds their quads backwards; the decal render type culls back
+            // faces, so swap the second and fourth vertex to face outward like floors and ceilings do
+            int second = out.size() - 18, fourth = out.size() - 6;
+            float[] e = out.elements();
+            for (int k = 0; k < 6; k++) {
+                float t = e[second + k];
+                e[second + k] = e[fourth + k];
+                e[fourth + k] = t;
+            }
+        }
         out.add(face.getStepX());
         out.add(face.getStepY());
         out.add(face.getStepZ());
