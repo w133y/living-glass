@@ -83,24 +83,41 @@ A full settings screen, opened from Mod Menu or from Sodium's video settings:
 
 ## 📋 Every feature at a glance
 
-All are on by default, and each has its own switch in the settings.
+Every feature of the mod in one place, grouped as above. For each one: where and when it shows up in the world, how long it takes to appear and go away with the default settings, and what you can change about it in the settings. All of them are on by default, and each can be switched off on its own.
 
-| Feature | When and where | How long (default) | Can tune |
+### ❄️ Windows
+
+| Feature | Where and when you see it | How long it lasts (default) | What you can change |
 |---|---|---|---|
 | Condensation | Inside windows of a warm room in a cold place | Fogs over in 40 s, clears in 25 s | Strength, build-up, clearing |
 | Breath on glass | Leaning close to a cold window | A few seconds | On / off |
 | Wiping | Right-click glass with an empty hand | Fogs again at the fog's pace | On / off |
 | Frost | Inside windows, below freezing | Creeps in over 90 s, melts in 30 s | Build-up, melting |
-| Outside ice | Outside of the glass in snowfall and on freezing nights | Grows over 3 min, 90 s on fogged glass | Build-up, both |
+| Outside ice | Outside of the glass in snowfall and on freezing nights | Grows over 3 min, 90 s on fogged glass | Build-up for both |
 | Raindrops and snowflakes | Glass out in rain or snow | Dries in 20 s | Drying |
 | Desert dust | Glass in deserts and badlands | Settles over 6 min | Strength, build-up |
 | Roof windows | Glass in a roof | Like the windows | On / off |
 | Stained glass tint | Fog on stained glass takes its color | Always | On / off |
+
+### 🌨️ Snow and frost
+
+| Feature | Where and when you see it | How long it lasts (default) | What you can change |
+|---|---|---|---|
 | Snow on ledges | Stairs, slabs, fences, walls, doors, trapdoors, in any snowfall | Builds over 15 min, stays after | Stay or melt, build-up |
 | Snow on walls | Walls facing the wind, in a blizzard | Builds over 15 min, falls away in 15 min | Blizzards only or any snowfall, amount, side walls, build-up, fall-away |
 | Hoarfrost | Grass, leaves, moss and podzol under the sky, on clear freezing nights | Builds over 9 min, thaws by day | Build-up |
+
+### 👣 Traces of you
+
+| Feature | Where and when you see it | How long it lasts (default) | What you can change |
+|---|---|---|---|
 | Footprints | Players and mobs on snow and sand | Fade in 60 s | Mobs' prints, fading |
 | Trampled grass | Grass and ferns you walk through | Springs back in half a second | On / off |
+
+### 💥 Marks
+
+| Feature | Where and when you see it | How long it lasts (default) | What you can change |
+|---|---|---|---|
 | Cracked glass | An arrow or trident stuck in glass | 3 min | Fading |
 | Arrow holes | An arrow or trident stuck in any other block | Stays after it is pulled out, then fades | On / off |
 | Explosion soot | Crater and walls round a blast | 4 min | Fading |
@@ -109,10 +126,22 @@ All are on by default, and each has its own switch in the settings.
 | Lightning scorch | Where lightning strikes; sand melts to glass | 3 min | Fading |
 | Snowball splats | Blocks and raised shields | 20 s | Fading |
 | Shield gashes | A shield knocked aside by an axe | Fades as the shield comes back | On / off |
+
+### 🌙 Life in the world
+
+| Feature | Where and when you see it | How long it lasts (default) | What you can change |
+|---|---|---|---|
 | Fireflies | Grass and flowers on mild, dry nights | Dusk to dawn | How many |
 | Tumbleweeds | Deserts and badlands | Roll by now and then | How often |
 | Steam | Water next to lava or magma | While they touch | On / off |
 
-Also in the settings: the climate (what counts as warm, how much night and rain cool things down, how far heat reaches), performance (scan radius and budget, drawing distance, tracked windows), a speed-up for testing snow, and the switches that leave an effect to Weather Glass, Interactive Foliage or a footprint mod.
+### ⚙️ Other settings
+
+| Group | What it changes |
+|---|---|
+| Climate | What counts as warm, how much night and rain cool things down, how far heat from furnaces and fires reaches |
+| Performance | How far and how fast windows are scanned, how far effects are drawn, how many windows are tracked |
+| Other mods | Switches that leave windows to Weather Glass, grass to Interactive Foliage, footprints to a footprint mod, or take them back |
+| Testing | Speeds up snow on walls and ledges and hoarfrost, to see them form quickly |
 
 Source: [github.com/w133y/living-glass](https://github.com/w133y/living-glass)
