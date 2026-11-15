@@ -4,7 +4,7 @@ setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
 echo ============================================
-echo   Living Glass - building all versions
+echo   Residuum - building all versions
 echo ============================================
 echo.
 
@@ -31,7 +31,7 @@ for %%V in (%VERSIONS%) do (
         echo [ERROR] Build for %%V failed, see the log above.
         set FAILED=!FAILED! %%V
     ) else (
-        copy /y "build\libs\livingglass-*+%%V.jar" out\ >nul
+        copy /y "build\libs\residuum-*+%%V.jar" out\ >nul
         set OK=!OK! %%V
     )
 )

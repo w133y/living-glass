@@ -1,4 +1,4 @@
-"""Ash, snow splat and lightning scorch textures for Living Glass, in the vanilla manner: a few fixed shades grouped
+"""Ash, snow splat and lightning scorch textures for Residuum, in the vanilla manner: a few fixed shades grouped
 into clean clusters, and one texture pixel per block pixel (1/16 block).
 
 ash_sheet: soot left by fire, one seamless 64x64 sheet (4x4 blocks) that burnt faces take by their place in the
@@ -263,4 +263,257 @@ for variant, (heart, rings, noise, stretch, arms_range, length_range, width, for
     glass.save(f"{out}/lightning_glass_{variant}.png")
     specular.save(f"{out}/lightning_glass_{variant}_s.png")
     sinter.save(f"{out}/lightning_sinter_{variant}.png")
+
+# Tumbleweeds: balls of dry twigs or pale dry grass seen side on, 16x16, see-through between them; the mod crosses three
+# of these at right angles and rolls them. Every twig curves: round the rim, and in long arcs across the middle, with a
+# short side twig curling off here and there. Lit from the top left, as a ball: a tone lighter there, darker below right.
+TWIG = [(198, 160, 104, 255), (176, 138, 84, 255), (146, 109, 63, 255), (116, 84, 47, 255), (90, 64, 36, 255)]
+DRY_GRASS = [(236, 228, 194, 255), (226, 216, 176, 255), (209, 186, 138, 255), (186, 156, 104, 255),
+             (163, 125, 72, 255)]  # short dry grass
+
+
+def tumbleweed(seed, tones, rim, across):
+    rnd = random.Random(seed)
+    weed = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
+    c = 7.5
+
+    def put(x, y, tone):
+        x, y = int(round(x)), int(round(y))
+        if 0 <= x < 16 and 0 <= y < 16 and math.hypot(x - c, y - c) <= 7.6:
+            lit = round(((x - c) + (y - c)) / 9)
+            weed.putpixel((x, y), tones[max(0, min(len(tones) - 1, tone + lit))])
+
+    def curl(x, y, a, tone):
+        # A side twig: two or three pixels, curling as it goes
+        turn = rnd.choice((-1, 1)) * 0.5
+        for _ in range(rnd.randint(2, 3)):
+            x, y, a = x + math.cos(a), y + math.sin(a), a + turn
+            put(x, y, tone)
+
+    for _ in range(rim):
+        a0, r = rnd.uniform(0, 2 * math.pi), rnd.uniform(4.6, 7.3)
+        sweep, bend = rnd.choice((-1, 1)) * rnd.uniform(0.8, 1.7), rnd.uniform(-1.4, 1.4)
+        tone = rnd.randrange(1, len(tones) - 1)
+        for k in range(48):
+            f = k / 47
+            a = a0 + sweep * f
+            rr = r + bend * math.sin(math.pi * f)
+            put(c + math.cos(a) * rr, c + math.sin(a) * rr, tone)
+            if k in (16, 32) and rnd.random() < 0.5:
+                curl(c + math.cos(a) * rr, c + math.sin(a) * rr, a + math.copysign(math.pi / 2, sweep) * rnd.choice((-1, 1)), tone)
+    for _ in range(across):
+        # An arc of a big circle whose middle is off the ball, so it bows across the ball's middle
+        side, far = rnd.uniform(0, 2 * math.pi), rnd.uniform(9, 15)
+        ox, oy = c + math.cos(side) * far, c + math.sin(side) * far
+        r = far + rnd.uniform(-3, 3)
+        tone = rnd.randrange(1, len(tones) - 1)
+        for k in range(90):
+            a = side + math.pi + (k / 89 - 0.5) * 1.8
+            put(ox + math.cos(a) * r, oy + math.sin(a) * r, tone)
+    return weed
+
+
+# Axe gashes on a shield, laid over its plate in the same 46px sheet as the snow splats (a 14px mark in a 16px clear
+# margin): a slanting cut into the wood, dark down its middle, with splintered pale wood along its edges
+GASH_DEEP, GASH_DARK, GASH_RAW = (38, 26, 16, 235), (78, 54, 32, 225), (196, 160, 110, 200)
+for variant in range(3):
+    rnd = random.Random(4040 + variant * 77)
+    img = Image.new("RGBA", (N + 2 * M, N + 2 * M), (0, 0, 0, 0))
+    length, slant = rnd.randint(9, 12), rnd.uniform(0.55, 0.95)
+    x0, y0 = (N - length * 0.8) / 2, (N - length * slant * 0.8) / 2
+    for k in range(length):
+        x, y = x0 + k * 0.8, y0 + k * 0.8 * slant
+        deep = 0 < k < length - 1  # thin at both ends
+        cx, cy = int(round(x)), int(round(y))
+        for px, py, tone in ((cx, cy, GASH_DEEP if deep else GASH_DARK), (cx, cy - 1, GASH_RAW), (cx, cy + 1, GASH_DARK)):
+            if 0 <= px < N and 0 <= py < N and (tone != GASH_RAW or rnd.random() < 0.8):
+                if img.getpixel((px + M, py + M))[3] == 0 or tone == GASH_DEEP:
+                    img.putpixel((px + M, py + M), tone)
+        if deep and rnd.random() < 0.25:  # a splinter sticking out
+            sx, sy = cx + rnd.choice((-1, 1)), cy + rnd.choice((-2, 2))
+            if 0 <= sx < N and 0 <= sy < N:
+                img.putpixel((sx + M, sy + M), GASH_RAW)
+    img.save(f"{out}/shield_scratch_{variant}.png")
+
+tumbleweed(5150, TWIG, 10, 3).save(f"{out}/tumbleweed.png")
+tumbleweed(6262, DRY_GRASS, 12, 3).save(f"{out}/tumbleweed_dry.png")
+
+# Cracks in glass where an arrow or trident struck it, in a 52px sheet (a web 20px across in a 16px clear margin):
+# a chipped spot where it hit, cracks running out from it that wander and fork, and broken rings between them.
+# Pale where they catch the light, with a faint dark edge so they read against a bright sky too.
+CRACK_CHIP, CRACK_LIT, CRACK_PALE = (255, 255, 255, 250), (244, 249, 252, 230), (210, 224, 234, 175)
+CRACK_EDGE = (52, 62, 74, 80)
+CRACK_N, CRACK_M = 20, 16
+for variant in range(4):
+    rnd = random.Random(7070 + variant * 131)
+    size = CRACK_N + 2 * CRACK_M
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    c = size / 2 - 0.5
+    reach = CRACK_N / 2 + 0.5
+
+    def put(x, y, tone, over):
+        px, py = int(round(x)), int(round(y))
+        if (px - c) ** 2 + (py - c) ** 2 <= reach * reach and (over or img.getpixel((px, py))[3] == 0):
+            img.putpixel((px, py), tone)
+
+    def crack(x, y, a, length, depth):
+        step, turning = 0.0, 0.0
+        pts = [(int(round(x)), int(round(y)))]
+        while step < length:
+            # It swings one way then the other, and turns aside wherever three pixels would line up
+            turning = turning * 0.6 + rnd.uniform(-0.35, 0.35)
+            a += turning
+            nx, ny = x + math.cos(a), y + math.sin(a)
+            p = (int(round(nx)), int(round(ny)))
+            if p == pts[-1]:
+                x, y = nx, ny
+                continue
+            if len(pts) >= 2 and (p[0] - pts[-1][0], p[1] - pts[-1][1]) == (pts[-1][0] - pts[-2][0], pts[-1][1] - pts[-2][1]):
+                a += rnd.choice((-1, 1)) * 0.75
+                continue
+            x, y = nx, ny
+            pts.append(p)
+            put(x, y, CRACK_LIT if step < length * 0.55 else CRACK_PALE, True)
+            if rnd.random() < 0.3:
+                put(x - math.sin(a), y + math.cos(a), CRACK_EDGE, False)
+            if depth < 2 and rnd.random() < 0.12:
+                crack(x, y, a + rnd.choice((-1, 1)) * rnd.uniform(0.6, 1.2), (length - step) * 0.6, depth + 1)
+            step += 1
+
+    rays = rnd.randint(5, 7)
+    turn = rnd.uniform(0, 2 * math.pi)
+    for k in range(rays):
+        crack(c, c, turn + k * 2 * math.pi / rays + rnd.uniform(-0.4, 0.4), rnd.uniform(6, 10), 0)
+    for ring in (rnd.uniform(3, 4.2), rnd.uniform(6, 7.5)):
+        a = rnd.uniform(0, 2 * math.pi)
+        for _ in range(rnd.randint(3, 5)):
+            span, r = rnd.uniform(0.4, 0.9), ring
+            t = a
+            while t < a + span:
+                r += rnd.uniform(-0.35, 0.35)
+                put(c + math.cos(t) * r, c + math.sin(t) * r, CRACK_PALE, False)
+                t += 0.7 / r
+            a += span + rnd.uniform(0.3, 0.8)
+    for dx, dy in [(0, 0), (1, 0), (0, 1), (1, 1)] + [(rnd.randint(-1, 2), rnd.randint(-1, 2)) for _ in range(3)]:
+        put(c - 0.5 + dx, c - 0.5 + dy, CRACK_CHIP, True)
+    img.save(f"{out}/crack_{variant}.png")
+
+# Footprints pressed into snow and sand, blocky as the feet that made them, in a 40px sheet (an 8px print in a 16px
+# clear margin), the toe at the top: print_N for N = surface * 3 + kind, surface 0 snow and 1 sand, kind 0 a left
+# boot, 1 a right boot (each 4px across and 5 long, as a leg is, with a notch at the inner heel), 2 a paw (a square pad
+# and three toes). The game lays them on the block's pixels by quarter turns. The hollow is a shade of the ground in
+# its own shadow, darker along the edges the light comes over, where snow has crumbled in a pixel here and there.
+PRINT_N, PRINT_M = 8, 16
+PRINT_TONES = [((150, 172, 204, 105), (112, 134, 172, 155)), ((122, 96, 62, 85), (94, 72, 44, 130))]
+BOOT = ["####",
+        "####",
+        "####",
+        "####",
+        "###."]
+PAW = ["#.#.#",
+       ".....",
+       ".###.",
+       ".###.",
+       ".###."]
+for surface, (hollow, shade) in enumerate(PRINT_TONES):
+    for kind in range(3):
+        rows = PAW if kind == 2 else [r[::-1] for r in BOOT] if kind == 1 else BOOT
+        rnd = random.Random(9090 + surface * 101 + kind * 7)
+        size = PRINT_N + 2 * PRINT_M
+        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        w, h = len(rows[0]), len(rows)
+        x0, y0 = size // 2 - w // 2, size // 2 - (h + 1) // 2
+
+        def inside(i, j):
+            return 0 <= j < h and 0 <= i < w and rows[j][i] == "#"
+
+        for j in range(h):
+            for i in range(w):
+                if inside(i, j):
+                    # In shadow under the edge the light comes over (top and left), now and then not quite to it
+                    shadowed = not inside(i, j - 1) or not inside(i - 1, j)
+                    if shadowed and surface == 0 and rnd.random() < 0.2:
+                        shadowed = False
+                    img.putpixel((x0 + i, y0 + j), shade if shadowed else hollow)
+        img.save(f"{out}/print_{surface * 3 + kind}.png")
+
+
+# Coats that grow over whole faces, one seamless 64x64 sheet each (4x4 blocks) laid on by place in the world like the
+# ash: hoarfrost on the tops of grass and leaves (rime_sheet), and snow driven onto walls (wall_snow_sheet). Alpha is
+# when each pixel comes in as the coat grows: it shows once the coat's strength reaches 0.1 / alpha, so the thickest
+# pixels (opaque) come first and the thinnest edge last, faint; clear pixels never come.
+def growth(alpha_at):
+    """The alpha that has a pixel come in at strength at (0..1], or 0 for one that never does."""
+    return 0 if alpha_at > 1 else min(255, round(25.5 / max(0.1, alpha_at)))
+
+
+def save_coat(img, name):
+    """A coat's sheet for the settings preview, which shows it grown as far as its alpha lets it: in the game a coat
+    grows by the noise of the world instead (DecalRenderer.coatShape), so it never repeats."""
+    img.save(f"{out}/{name}.png")
+
+
+def ranked(values):
+    """Each value's rank among them, 0 for the lowest to 1 for the highest."""
+    order = sorted(range(len(values)), key=values.__getitem__)
+    rank = [0.0] * len(values)
+    for k, i in enumerate(order):
+        rank[i] = k / (len(values) - 1)
+    return rank
+
+
+def comes_in(rank, stops):
+    """When a pixel of this rank comes in, from (rank, strength) stops: the highest ranks first, below the first stop never."""
+    if rank < stops[0][0]:
+        return 2
+    for (r0, g0), (r1, g1) in zip(stops, stops[1:]):
+        if rank <= r1:
+            return g0 + (g1 - g0) * (rank - r0) / (r1 - r0)
+    return stops[-1][1]
+
+
+RIME = [(240, 247, 255), (222, 234, 248), (204, 220, 240)]
+rnd = random.Random(1212)
+coarse, fine = wrapped(4, 1.0), wrapped(16, 0.6)
+# Crystals in clusters: a grainy speckle that thickens where the coarse noise is high; grown, three fifths of the face
+t = [coarse[y][x] + fine[y][x] + rnd.uniform(-0.45, 0.45) for y in range(L) for x in range(L)]
+rank = ranked(t)
+img = Image.new("RGBA", (L, L), (0, 0, 0, 0))
+for k, r in enumerate(rank):
+    a = growth(comes_in(r, [(0.4, 1.0), (0.7, 0.22), (0.92, 0.1), (1.0, 0.06)]))
+    if a:
+        img.putpixel((k % L, k // L), RIME[0 if r > 0.85 else 1 if r > 0.6 else 2] + (a,))
+save_coat(img, "rime_sheet")
+
+WALL_SNOW = [(250, 252, 255), (232, 240, 248), (210, 222, 236)]
+rnd = random.Random(3434)
+coarse, fine = wrapped(6, 1.0), wrapped(16, 0.45)
+# Blotches that cake on and spread, ragged at their edges; grown, half the face, most of that thick
+t = [coarse[y][x] + fine[y][x] + rnd.uniform(-0.15, 0.15) for y in range(L) for x in range(L)]
+rank = ranked(t)
+img = Image.new("RGBA", (L, L), (0, 0, 0, 0))
+for k, r in enumerate(rank):
+    a = growth(comes_in(r, [(0.5, 1.0), (0.62, 0.2), (0.8, 0.1), (1.0, 0.05)]))
+    if a:
+        img.putpixel((k % L, k // L), WALL_SNOW[0 if r > 0.8 else 1 if r > 0.6 else 2] + (a,))
+save_coat(img, "wall_snow_sheet")
+
+
+# The hole an arrow leaves in a block, in a 36px sheet (a 4px mark in a 16px clear margin). It multiplies the block's
+# own texture like the burn marks: a dark pit a couple of pixels across where the shaft went in, a few pixels round it
+# darkened and chipped; alpha is when each pixel goes as the mark fades, the pit last.
+HOLE_PIT, HOLE_CHIP, HOLE_NEUTRAL = (34, 30, 28), (92, 88, 84), (128, 128, 128, 0)
+for variant in range(3):
+    rnd = random.Random(5656 + variant * 89)
+    size = 4 + 2 * 16
+    img = Image.new("RGBA", (size, size), HOLE_NEUTRAL)
+    c = size // 2 - 1
+    pit = [(0, 0), (1, 0), (0, 1), (1, 1)][:4 - (variant == 2)]
+    for dx, dy in pit:
+        img.putpixel((c + dx, c + dy), HOLE_PIT + (255,))
+    for _ in range(rnd.randint(3, 5)):
+        dx, dy = rnd.choice([(-1, 0), (2, 0), (0, -1), (0, 2), (-1, 1), (2, 1), (1, -1), (1, 2), (-1, -1), (2, 2)])
+        if img.getpixel((c + dx, c + dy))[3] == 0:
+            img.putpixel((c + dx, c + dy), HOLE_CHIP + (rnd.choice((90, 120, 150)),))
+    img.save(f"{out}/arrow_hole_{variant}.png")
 print("ok")

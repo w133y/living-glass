@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "livingglass",
+  "id": "residuum",
   "version": "${version}",
-  "name": "Living Glass",
-  "description": "Vanilla glass reacts to the weather: windows fog up, frost over and catch raindrops. Client-side only.",
+  "name": "Residuum",
+  "description": "What the weather and the world leave behind: windows fog and frost over, snow settles on ledges and drives onto walls in a blizzard, fire and explosions leave soot, arrows crack glass, feet leave prints in snow and sand, grass bends where you walk, and fireflies come out on mild nights. Client-side only.",
   "authors": [
     "w1z4r_d"
   ],
@@ -13,19 +13,22 @@
     "issues": "https://github.com/w133y/living-glass/issues"
   },
   "license": "MIT",
-  "icon": "assets/livingglass/icon.png",
+  "icon": "assets/residuum/icon.png",
   "environment": "client",
   "entrypoints": {
     "client": [
-      "com.w1z4r_d.livingglass.LivingGlassClient"
+      "com.w1z4r_d.residuum.ResiduumClient"
     ],
     "modmenu": [
-      "com.w1z4r_d.livingglass.ModMenuIntegration"
+      "com.w1z4r_d.residuum.ModMenuIntegration"
+    ],
+    "sodium:config_api_user": [
+      ${sodium_entry}
     ]
   },
   "mixins": [
-    "livingglass.mixins.json",
-    "livingglass.compat.mixins.json"
+    "residuum.mixins.json",
+    "residuum.compat.mixins.json"
   ],
   "depends": {
     "fabricloader": ">=0.19",

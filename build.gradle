@@ -17,6 +17,8 @@ versionFile.withInputStream { vp.load(it) }
 	}
 }
 def remap = vp.remap.toBoolean()
+// Sodium 0.8 and later let mods add pages to its settings screen; versions with it compile src/sodium against it
+def sodiumApi = vp.getProperty('sodium_api')?.toBoolean() ?: false
 def javaVersion = vp.java as int
 
 apply plugin: remap ? 'net.fabricmc.fabric-loom-remap' : 'net.fabricmc.fabric-loom'
@@ -35,6 +37,11 @@ sourceSets {
 		}
 		resources {
 			srcDir "src/compat/${vp.compat}/resources"
+		}
+		if (sodiumApi) {
+			java {
+				srcDir 'src/sodium/java'
+			}
 		}
 	}
 }
@@ -65,6 +72,9 @@ dependencies {
 		modImplementation "net.fabricmc.fabric-api:fabric-api:${vp.fabric_api_version}"
 		// Mod Menu is compile-only; the mod works without it
 		modCompileOnly("com.terraformersmc:modmenu:${vp.modmenu_version}") { transitive = false }
+		if (sodiumApi) {
+			modCompileOnly "maven.modrinth:sodium:${vp.sodium_version}"
+		}
 		modLocalRuntime("com.terraformersmc:modmenu:${vp.modmenu_version}") { transitive = false }
 		if (withShaders) {
 			modLocalRuntime "maven.modrinth:sodium:${vp.sodium_version}"
@@ -74,6 +84,9 @@ dependencies {
 		implementation "net.fabricmc:fabric-loader:${project.loader_version}"
 		implementation "net.fabricmc.fabric-api:fabric-api:${vp.fabric_api_version}"
 		compileOnly("com.terraformersmc:modmenu:${vp.modmenu_version}") { transitive = false }
+		if (sodiumApi) {
+			compileOnly "maven.modrinth:sodium:${vp.sodium_version}"
+		}
 		localRuntime("com.terraformersmc:modmenu:${vp.modmenu_version}") { transitive = false }
 		if (withShaders) {
 			localRuntime "maven.modrinth:sodium:${vp.sodium_version}"
@@ -83,7 +96,8 @@ dependencies {
 }
 
 processResources {
-	def props = [version: project.version, mc_dep: vp.mc_dep, java: vp.java]
+	def props = [version: project.version, mc_dep: vp.mc_dep, java: vp.java,
+	             sodium_entry: sodiumApi ? '"com.w1z4r_d.residuum.sodium.SodiumConfig"' : '']
 	inputs.properties props
 	filesMatching(["fabric.mod.json", "*.mixins.json"]) {
 		expand props

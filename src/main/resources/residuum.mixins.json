@@ -1,0 +1,16 @@
+{
+  "required": true,
+  "package": "com.w1z4r_d.residuum.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "ClientLevelMixin",
+    "ClientPacketListenerMixin",
+    "ItemModelResolverMixin",
+    "ItemStackRenderStateMixin",
+    "MinecraftMixin",
+    "ShieldSpecialRendererMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
