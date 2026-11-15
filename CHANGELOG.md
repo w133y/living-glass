@@ -9,7 +9,7 @@ Living Glass is now **Residuum**: it has grown well past glass. Its settings mov
 - **Snowflakes:** in a snowfall, flakes stick to glass out in it, twice as many in a storm; each melts away gradually, and so do the last of them once the snowfall is over.
 - **Frosty nights:** outside ice also grows on freezing nights without snow, at half the pace.
 - **Lightning rods:** a rod struck by lightning crackles with little bolts and sparks for 10 to 15 seconds.
-- **Trampled grass:** grass, ferns, tall grass, dry grass and bushes that players walk through give way over a few ticks, pushed aside off their way to either side, and once left alone spring back up in fine steps over about 20 seconds, quickly at first and slower as they straighten.
+- **Trampled grass:** grass, ferns, tall grass, dry grass and bushes that players walk through give way over a few ticks, pushed aside off their way to either side, and once left alone spring back up in fine steps half a second after, quickly at first and slower as they straighten.
 - **Explosion soot:** TNT, creepers, end crystals, beds and other explosions blacken the crater they leave and the blocks round it that the blast could see, black near it and thinning out raggedly. The soot stays 4 minutes (a new setting), then fades like ash.
 - **Tumbleweeds** cast a shadow and kick up the ground's dust where they land, hop or knock into a wall.
 - **Cracked glass:** an arrow or trident that sticks in glass cracks it round where it went in, a jagged web that shows from both sides and runs on into the glass next to it. It stays 3 minutes (a new setting), and goes at once if the glass is broken.

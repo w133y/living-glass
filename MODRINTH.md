@@ -37,7 +37,7 @@ Warmth comes from lit furnaces, campfires, fire, lava, torches and players in th
 ![Footprints](https://raw.githubusercontent.com/w133y/living-glass/main/media/features/footprints.gif)
 
 - **Footprints:** players and mobs press their prints into snow and sand: boots from people, paws from animals. They fade behind you.
-- **Trampled grass:** grass and ferns you walk through are pushed aside, and slowly stand back up after you.
+- **Trampled grass:** grass and ferns you walk through are pushed aside, and spring back up half a second after you.
 
 ![Trampled grass](https://raw.githubusercontent.com/w133y/living-glass/main/media/features/grass.gif)
 
@@ -80,5 +80,39 @@ A full settings screen, opened from Mod Menu or from Sodium's video settings:
 - **Sodium** and **Iris shaders:** work. All of the GIFs above are recorded with Complementary Reimagined.
 - **Weather Glass, Interactive Foliage, Soft Imprints:** if one is installed, Residuum leaves that effect to it. A switch in the settings takes it back.
 - Connected-glass resource packs, and packs that retexture snow: effects follow them.
+
+## 📋 Every feature at a glance
+
+All are on by default, and each has its own switch in the settings.
+
+| Feature | When and where | How long (default) | Can tune |
+|---|---|---|---|
+| Condensation | Inside windows of a warm room in a cold place | Fogs over in 40 s, clears in 25 s | Strength, build-up, clearing |
+| Breath on glass | Leaning close to a cold window | A few seconds | On / off |
+| Wiping | Right-click glass with an empty hand | Fogs again at the fog's pace | On / off |
+| Frost | Inside windows, below freezing | Creeps in over 90 s, melts in 30 s | Build-up, melting |
+| Outside ice | Outside of the glass in snowfall and on freezing nights | Grows over 3 min, 90 s on fogged glass | Build-up, both |
+| Raindrops and snowflakes | Glass out in rain or snow | Dries in 20 s | Drying |
+| Desert dust | Glass in deserts and badlands | Settles over 6 min | Strength, build-up |
+| Roof windows | Glass in a roof | Like the windows | On / off |
+| Stained glass tint | Fog on stained glass takes its color | Always | On / off |
+| Snow on ledges | Stairs, slabs, fences, walls, doors, trapdoors, in any snowfall | Builds over 15 min, stays after | Stay or melt, build-up |
+| Snow on walls | Walls facing the wind, in a blizzard | Builds over 15 min, falls away in 15 min | Blizzards only or any snowfall, amount, side walls, build-up, fall-away |
+| Hoarfrost | Grass, leaves, moss and podzol under the sky, on clear freezing nights | Builds over 9 min, thaws by day | Build-up |
+| Footprints | Players and mobs on snow and sand | Fade in 60 s | Mobs' prints, fading |
+| Trampled grass | Grass and ferns you walk through | Springs back in half a second | On / off |
+| Cracked glass | An arrow or trident stuck in glass | 3 min | Fading |
+| Arrow holes | An arrow or trident stuck in any other block | Stays after it is pulled out, then fades | On / off |
+| Explosion soot | Crater and walls round a blast | 4 min | Fading |
+| Ash | The block fire burned on, soot around it | Fades in 2 min | Build-up, side soot, fading |
+| Torch soot | Underside of the block above a torch | Builds while it burns, fades once it is gone | On / off |
+| Lightning scorch | Where lightning strikes; sand melts to glass | 3 min | Fading |
+| Snowball splats | Blocks and raised shields | 20 s | Fading |
+| Shield gashes | A shield knocked aside by an axe | Fades as the shield comes back | On / off |
+| Fireflies | Grass and flowers on mild, dry nights | Dusk to dawn | How many |
+| Tumbleweeds | Deserts and badlands | Roll by now and then | How often |
+| Steam | Water next to lava or magma | While they touch | On / off |
+
+Also in the settings: the climate (what counts as warm, how much night and rain cool things down, how far heat reaches), performance (scan radius and budget, drawing distance, tracked windows), a speed-up for testing snow, and the switches that leave an effect to Weather Glass, Interactive Foliage or a footprint mod.
 
 Source: [github.com/w133y/living-glass](https://github.com/w133y/living-glass)

@@ -20,7 +20,7 @@ All recorded with Iris and Complementary Reimagined.
 - **Outside ice:** during snowfall, and slowly on freezing nights, feathery frost grows on the outside of the window from a little bank of snow at the bottom.
 - **Torch soot:** a torch smudges the underside of the block above it with soot.
 - **Tumbleweeds:** now and then a tumbleweed rolls across a desert or badlands, casting a shadow and kicking up dust where it lands; a hit breaks it up.
-- **Trampled grass:** grass and ferns you walk through are pushed aside to either side of your way, and slowly stand back up.
+- **Trampled grass:** grass and ferns you walk through are pushed aside to either side of your way, and spring back up half a second after you.
 - **Footprints:** players and mobs leave footprints in snow and sand that fade after a while.
 - **Fireflies:** on mild, dry nights, specks of light glow and drift over grass and flowers, away from torches.
 - **Cracked glass:** an arrow or trident that sticks in glass cracks it, seen from both sides; in other blocks it leaves a hole.

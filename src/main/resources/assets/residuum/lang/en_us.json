@@ -167,7 +167,7 @@
   "residuum.option.lightning": "Lightning scorch",
   "residuum.option.lightning.tooltip": "Lightning leaves a burn mark on the ground and melts sand into glass. A lightning rod it strikes crackles with little bolts for a while after.",
   "residuum.option.trampling": "Trampled grass",
-  "residuum.option.trampling.tooltip": "Grass and ferns you walk through lie down the way you went, and slowly stand back up once you have gone.",
+  "residuum.option.trampling.tooltip": "Grass and ferns you walk through lie down the way you went, and spring back up half a second after you have gone.",
   "residuum.option.explosions": "Explosion soot",
   "residuum.option.leave_glass": "Leave windows to %s",
   "residuum.option.leave_glass.tooltip": "%s is installed, and it puts weather on windows too. While this is on, Residuum leaves fog, frost, ice, dust and raindrops on glass to it, so they are not drawn twice; its marks, grass and the rest stay. Switch it off to have Residuum draw the windows as well.",

@@ -32,7 +32,7 @@ public final class Trampling {
      * alone it lies FLAT_TICKS, then springs back up over RISE_TICKS, quickly at first and slower as it straightens.
      */
     private static final int STAGES = 12, PRESS = 4;
-    private static final long FLAT_TICKS = 40, RISE_TICKS = 500;
+    private static final long FLAT_TICKS = 2, RISE_TICKS = 10;
     /** How far the top of a plant a block high leans the way it was walked, and how far it sinks, lying flat. */
     private static final float LEAN = 0.35f, SINK = 0.3f;
     private static final int ANGLES = 16;
